@@ -32,7 +32,13 @@ pub struct Rect {
 pub type InputSink = Arc<dyn Fn(String, UiInput) + Send + Sync>;
 
 enum Msg {
-    Rect(Option<Rect>),
+    Rect(
+        #[cfg_attr(
+            not(windows),
+            expect(dead_code, reason = "no native surface to place off Windows")
+        )]
+        Option<Rect>,
+    ),
     Frame,
     Clear,
     Quit,
@@ -148,15 +154,37 @@ impl Presenter {
 }
 
 struct ThreadCtx {
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "parent HWND; only the Windows presenter embeds a child window"
+        )
+    )]
     parent: isize,
     rx: mpsc::Receiver<Msg>,
     latest: Arc<Mutex<Option<Arc<VideoFrame>>>>,
     queued: Arc<AtomicBool>,
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "input over the video only exists with the Windows surface"
+        )
+    )]
     session: Arc<Mutex<Option<String>>>,
+    #[cfg_attr(
+        not(windows),
+        expect(
+            dead_code,
+            reason = "input over the video only exists with the Windows surface"
+        )
+    )]
     sink: Arc<OnceLock<InputSink>>,
 }
 
 /// Message-pump cadence while idle.
+#[cfg(windows)]
 const PUMP: Duration = Duration::from_millis(8);
 
 /// Windows virtual-key → USB HID usage (keyboard page) for the keys a
@@ -730,13 +758,26 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use super::ThreadCtx;
+    use std::sync::PoisonError;
+    use std::sync::atomic::Ordering;
 
-    /// No native surface off Windows yet; frames are dropped.
+    use super::{Msg, ThreadCtx};
+
+    /// No native surface off Windows yet: frames are released as they come
+    /// (latest-frame-wins), and input never originates here.
     pub(super) fn run(ctx: &ThreadCtx) {
-        while ctx.rx.recv().is_ok() {
-            ctx.queued
-                .store(false, std::sync::atomic::Ordering::Release);
+        while let Ok(msg) = ctx.rx.recv() {
+            match msg {
+                Msg::Quit => return,
+                Msg::Rect(_) => {}
+                Msg::Frame | Msg::Clear => {
+                    ctx.latest
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take();
+                    ctx.queued.store(false, Ordering::Release);
+                }
+            }
         }
     }
 }
