@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": ["scripts/**"],
+  "ignore": ["brand/**"],
   "ignoreIssues": {
     "pnpm-workspace.yaml": ["catalog"]
   },
@@ -15,6 +15,20 @@
       "entry": ["src/routes/**/*.tsx", "scripts/*.mjs", "e2e/**/*.ts"],
       "project": ["src/**/*.{ts,tsx}", "scripts/*.mjs"],
       "ignoreDependencies": ["tailwindcss"]
+    },
+    "apps/api": {
+      "entry": ["scripts/*.{ts,mjs}"],
+      "project": ["src/**/*.ts", "scripts/*.{ts,mjs}"]
+    },
+    "packages/sdk": {
+      "entry": ["scripts/*.mjs"],
+      "project": ["src/**/*.ts", "scripts/*.mjs"]
+    },
+    "packages/cli": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/mcp": {
+      "project": ["src/**/*.ts"]
     }
   }
 }

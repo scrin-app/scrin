@@ -1,0 +1,30 @@
+case                 size  ink    runs(centre)  medianC  verdict
+A tile                 16  0.230             3     9.49  PASS
+A tile                 24  0.167             3     9.48  PASS
+A tile                 32  0.162             3     9.49  PASS
+A tile on light        16  0.480             3     9.49  PASS
+A tile on light        24  0.387             3    12.55  PASS
+A tile on light        32  0.420             3    13.35  PASS
+A tray dark            16  0.234             3     9.88  PASS
+A tray dark            24  0.167             3     9.88  PASS
+A tray dark            32  0.166             3     9.88  PASS
+A tray light           16  0.219             3     5.15  PASS
+A tray light           24  0.155             3     5.15  PASS
+A tray light           32  0.137             3     5.15  PASS
+A mono black           16  0.234             3    21.00  PASS
+A mono black           24  0.160             3    20.87  PASS
+A mono black           32  0.166             3    21.00  PASS
+B twin panes           16  0.309             2     9.49  info
+B twin panes           24  0.311             2     9.48  info
+B twin panes           32  0.299             2     9.49  info
+C corner brackets      16  0.188             2     9.49  info
+C corner brackets      24  0.156             1     9.48  info
+C corner brackets      32  0.162             1     9.49  info
+D screen + code        16  0.430             3     4.89  info
+D screen + code        24  0.431             3     9.32  info
+D screen + code        32  0.358             3    14.42  info
+lockup: 8 shapes, 0 outside viewBox {"x":5,"y":2,"w":68.30769348144531,"h":19} -> PASS
+wm: 6 shapes, 0 outside viewBox {"x":0,"y":-5.5,"w":61.5,"h":21.5} -> PASS
+wordmark letter gaps (centreline units; visible gap = minus stroke half-widths): sc gap 6.50 / cr gap 6.00 / ri gap 4.50 / in gap 6.50
+wordmark raster @ 20 px x-height: 5 letter islands, visible gaps 4/5/3/4 px -> PASS
+RESULT: PASS - chosen mark keeps 3 bars (both counters open) and >= 3:1 at 16/24/32 px

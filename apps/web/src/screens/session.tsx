@@ -303,7 +303,10 @@ function ToolButton({
 function RemoteCanvas({ id, hasVideo }: { id: string; hasVideo: boolean }) {
   const { t } = useTranslation();
   return (
-    <figure className="relative m-0 aspect-[43/18] max-h-full w-full max-w-full overflow-hidden">
+    <figure
+      data-scrin-video=""
+      className="relative m-0 aspect-[43/18] max-h-full w-full max-w-full overflow-hidden"
+    >
       <figcaption className="sr-only">
         {t('session.canvasLabel', { id: formatScrinId(id) })}
       </figcaption>

@@ -10,6 +10,7 @@ export default defineConfig(
   {
     ignores: [
       '**/dist/**',
+      '**/dist-*/**',
       '**/node_modules/**',
       '**/.turbo/**',
       '**/routeTree.gen.ts',

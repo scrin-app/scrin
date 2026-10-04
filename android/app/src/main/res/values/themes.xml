@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window theme only; Compose draws everything with ScrinTheme. -->
+    <style name="Theme.Scrin" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    <!-- Launch theme (androidx core-splashscreen): brand splash, then Theme.Scrin. -->
+    <style name="Theme.Scrin.Starting" parent="Theme.SplashScreen.IconBackground">
+        <item name="windowSplashScreenBackground">@color/splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+        <!-- The ivory half of the mark needs the ink plate on the light splash. -->
+        <item name="windowSplashScreenIconBackgroundColor">@color/scrin_ink</item>
+        <item name="windowSplashScreenAnimationDuration">720</item>
+        <item name="postSplashScreenTheme">@style/Theme.Scrin</item>
+    </style></resources>

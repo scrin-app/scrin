@@ -1,0 +1,13 @@
+# BuildKit reads <Dockerfile>.dockerignore for builds that use apps/api/Dockerfile
+# with the repository root as context.
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!apps/api/**
+apps/api/node_modules
+apps/api/dist
+apps/api/**/*.test.ts
+apps/api/src/test
+**/.env*

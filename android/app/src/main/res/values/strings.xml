@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">scrin</string>
+
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_done">Done</string>
+    <string name="action_allow">Allow</string>
+    <string name="action_save">Save</string>
+    <string name="action_send">Send</string>
+
+    <string name="home_tagline">Open-source remote desktop</string>
+    <string name="home_my_device">This device</string>
+    <string name="home_your_id">Your ID</string>
+    <string name="home_one_time_code">One-time code</string>
+    <string name="home_code_hint">Works once. Give it only to someone you trust.</string>
+    <string name="home_code_expires_in">Code expires in %1$s</string>
+    <string name="home_new_code">New code</string>
+    <string name="home_copy_id">Copy connect link</string>
+    <string name="home_share_title">Share access details</string>
+    <string name="home_share_text">Connect to my device with scrin.\nLink: %1$s\nOne-time code: %2$s</string>
+    <string name="home_allow_control">Allow control</string>
+    <string name="home_connect_title">Control another device</string>
+    <string name="home_connect_body">Enter the partner\'s link or ID and the one-time code shown on their screen.</string>
+    <string name="home_partner_id">Partner link or ID</string>
+    <string name="home_partner_id_hint">A scrin link, or a 64-character hex ID</string>
+    <string name="home_code_field">One-time code</string>
+    <string name="home_e2e_note">End-to-end encrypted. The code never leaves either device.</string>
+    <string name="home_connect_action">Connect</string>
+
+    <string name="error_target_empty">Enter the partner\'s link or ID.</string>
+    <string name="error_target_invalid">That doesn\'t look like a scrin link or ID.</string>
+    <string name="error_code_incomplete">The code has 8 characters, e.g. ABCD-EFGH.</string>
+
+    <string name="connecting_title">Connecting</string>
+    <string name="step_connecting">Reaching the device</string>
+    <string name="step_pairing">Checking the code securely</string>
+    <string name="step_waiting_host">Waiting for the other person to accept</string>
+    <string name="step_active">Connected</string>
+
+    <string name="sas_title">Compare these emoji</string>
+    <string name="sas_body_controller">Ask the other person to read the emoji on their screen. They must match exactly.</string>
+    <string name="sas_body_host">Check that the person who asked sees these same emoji.</string>
+    <string name="sas_mismatch_hint">If they don\'t match, cancel: someone may be in the middle.</string>
+    <string name="sas_a11y">Verification emoji: %1$s</string>
+
+    <string name="ended_title">Session ended</string>
+    <string name="end_cancelled">You ended the session.</string>
+    <string name="end_rejected">The other person declined.</string>
+    <string name="end_host_stopped">The other person stopped the session.</string>
+    <string name="end_reported">The session was stopped and reported.</string>
+    <string name="end_peer_ended">The other side ended the session.</string>
+    <string name="end_disconnected">The connection was lost.</string>
+    <string name="end_time_limit">The time limit for this session was reached.</string>
+    <string name="end_connect_failed">Couldn\'t reach the device. Check the link and the network.</string>
+    <string name="end_pairing_failed">Wrong or expired code. Ask for a new one.</string>
+    <string name="end_timeout">Nobody answered in time.</string>
+
+    <string name="viewer_waiting_video">Waiting for the screen…</string>
+    <string name="viewer_waiting_video_body">The picture appears as soon as the other device starts sharing.</string>
+    <string name="viewer_mode_trackpad">Trackpad</string>
+    <string name="viewer_mode_direct">Touch</string>
+    <string name="viewer_keyboard">Keyboard</string>
+    <string name="viewer_disconnect">Disconnect</string>
+    <string name="viewer_rtt">%1$d ms</string>
+    <string name="viewer_type_here">Type to send</string>
+
+    <string name="host_title">Allow remote control</string>
+    <string name="host_step_input">1 · Allow touch control</string>
+    <string name="host_input_body">To let a helper tap and type on this phone, scrin needs its remote-control service turned on in Accessibility settings. You can view-only share without it.</string>
+    <string name="host_input_enable">Turn on remote control</string>
+    <string name="host_input_enabled">Remote control is on</string>
+    <string name="host_restricted_link">Option greyed out? See how to allow it</string>
+    <string name="host_step_notifications">2 · Show the session notification</string>
+    <string name="host_notifications_body">While someone is connected, a notification stays visible so you can stop the session at any time.</string>
+    <string name="host_step_share">Share these with your helper</string>
+    <string name="host_share_body">They type your ID and this one-time code. You will still have to accept.</string>
+    <string name="host_listening">Ready. Waiting for a connection request.</string>
+    <string name="host_not_listening">Starting…</string>
+    <string name="host_pairing">Someone is connecting. Checking the code…</string>
+    <string name="host_active_title">Your screen is being shared</string>
+    <string name="host_active_with">Connected to %1$s</string>
+    <string name="host_stop">Stop</string>
+    <string name="host_stop_report">Stop &amp; report</string>
+
+    <string name="disclosure_title">Remote control uses Accessibility</string>
+    <string name="disclosure_what">scrin uses the Android Accessibility API only during a session you accept, to perform the taps, swipes, Back/Home actions and text entry your helper sends.</string>
+    <string name="disclosure_data">It reads the focused text field only to type into it. Nothing it sees is stored, sent to scrin servers or used for anything else.</string>
+    <string name="disclosure_not">It is not an assistive tool and never acts when no session is running.</string>
+    <string name="disclosure_off">You can turn it off at any time in Settings › Accessibility › scrin remote control.</string>
+    <string name="disclosure_agree">I agree, open settings</string>
+    <string name="disclosure_decline">Not now</string>
+
+    <string name="scam_title">Beware of scams</string>
+    <string name="scam_body">Banks, Microsoft, Google, the police or couriers will never ask you to install this or read out a code. If someone you don\'t know asked you to, end the call.</string>
+
+    <string name="request_title">Someone wants to control this device</string>
+    <string name="request_unknown_device">Unknown device</string>
+    <string name="request_verified">Verified</string>
+    <string name="request_unverified">Unverified</string>
+    <string name="request_permissions">Allow them to</string>
+    <string name="request_anonymous_caps">Unverified sessions end after 60 minutes and can\'t transfer files or set up unattended access.</string>
+    <string name="request_accept">Accept</string>
+    <string name="request_accept_in">Accept (%1$d)</string>
+    <string name="request_reject">Reject</string>
+    <string name="request_report">Report</string>
+
+    <string name="perm_view">See the screen</string>
+    <string name="perm_input">Tap and type</string>
+    <string name="perm_clipboard">Use the clipboard</string>
+    <string name="perm_chat">Chat</string>
+    <string name="perm_other">Other</string>
+
+    <string name="notif_channel_session">Remote session</string>
+    <string name="notif_channel_session_desc">Shown while someone can see or control this device.</string>
+    <string name="notif_session_title">Remote session active — tap to stop</string>
+    <string name="notif_session_text">Someone can see this screen.</string>
+    <string name="notif_open">Open</string>
+    <string name="notif_stop">Stop</string>
+
+    <string name="a11y_service_label">scrin remote control</string>
+    <string name="a11y_service_summary">Lets a helper you accepted tap and type during a scrin session.</string>
+    <string name="a11y_service_description">Used only during a remote session you accepted: performs the taps, swipes, Back/Home/Recents and text entry sent by the person helping you. It is not an assistive tool, does not run outside a session, and stores nothing.</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_theme">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="settings_dynamic_color">Wallpaper colours</string>
+    <string name="settings_dynamic_color_body">Use the system palette instead of the scrin accent.</string>
+    <string name="settings_accent">Accent</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_language_system_only">This Android version picks the app language from the system.</string>
+    <string name="settings_language_open">Open language settings</string>
+    <string name="lang_system">System default</string>
+    <string name="lang_en" translatable="false">English</string>
+    <string name="lang_ro" translatable="false">Română</string>
+    <string name="settings_security">Security</string>
+    <string name="settings_fingerprint">Device fingerprint</string>
+    <string name="settings_network">Network</string>
+    <string name="settings_relay_body">Leave empty to use the default relays, or enter your own relay URLs separated by commas.</string>
+    <string name="settings_relay_label">Relay URLs</string>
+    <string name="settings_relay_invalid">Use https:// URLs separated by commas.</string>
+    <string name="settings_relay_restart">Applied the next time scrin starts.</string>
+    <string name="settings_about">About</string>
+
+    <string name="accent_lagoon">Lagoon (scrin)</string>
+    <string name="accent_iris">Iris</string>
+    <string name="accent_ocean">Ocean</string>
+    <string name="accent_sky">Sky</string>
+    <string name="accent_teal">Teal</string>
+    <string name="accent_mint">Mint</string>
+    <string name="accent_lime">Lime</string>
+    <string name="accent_amber">Amber</string>
+    <string name="accent_tangerine">Tangerine</string>
+    <string name="accent_coral">Coral</string>
+    <string name="accent_rose">Rose</string>
+    <string name="accent_orchid">Orchid</string>
+    <string name="accent_violet">Violet</string>
+    <string name="accent_graphite">Graphite</string>
+
+    <string name="trusted_title">Trusted devices</string>
+    <string name="trusted_body">These devices may connect without a code. Remove any you don\'t recognise.</string>
+    <string name="trusted_empty">No trusted devices.</string>
+    <string name="trusted_remove">Remove %1$s</string>
+    <string name="trust_view_only">View only</string>
+    <string name="trust_support">Support</string>
+    <string name="trust_full">Full access</string>
+
+    <string name="about_title">About scrin</string>
+    <string name="about_version">Version %1$s (%2$s)</string>
+    <string name="about_body">Remote desktop with end-to-end encryption, a one-time code that never travels, and emoji verification.</string>
+    <string name="about_licence">Licence</string>
+    <string name="about_licence_body">scrin is free software under the GNU Affero General Public License v3.0 only. You may use, study, share and change it; if you run a modified version as a network service, you must offer its source to its users.</string>
+    <string name="about_read_licence">Read the AGPL-3.0</string>
+    <string name="about_source">Source code</string>
+    <string name="about_third_party">Third-party software</string>
+    <string name="about_third_party_body">Includes AndroidX and Jetpack Compose (Apache-2.0), Kotlin (Apache-2.0), JNA (Apache-2.0), Material icons (Apache-2.0), UniFFI (MPL-2.0), iroh (MIT/Apache-2.0) and the Rust ecosystem crates listed in the source repository.</string>
+
+    <string name="restricted_title">Allow restricted settings</string>
+    <string name="restricted_body">On Android 13 and newer, apps installed outside a store can\'t turn on Accessibility services until you allow it once.</string>
+    <string name="restricted_step1">Open Settings › Accessibility and tap scrin remote control once. Android shows “Restricted setting”. Tap OK.</string>
+    <string name="restricted_step2">Open scrin\'s App info (button below).</string>
+    <string name="restricted_step3">Tap the ⋮ menu in the top-right corner.</string>
+    <string name="restricted_step4">Tap “Allow restricted settings” and confirm with your PIN or fingerprint.</string>
+    <string name="restricted_step5">Go back to Accessibility and turn on scrin remote control.</string>
+    <string name="restricted_open_app_info">Open App info</string>
+    <string name="restricted_open_a11y">Open Accessibility settings</string>
+</resources>

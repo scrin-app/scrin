@@ -1,0 +1,84 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "scrin",
+  "version": "0.1.0",
+  "identifier": "ro.dragoscatalin.scrin",
+  "build": {
+    "beforeDevCommand": "pnpm --filter web exec vite --mode desktop",
+    "devUrl": "http://localhost:5182",
+    "beforeBuildCommand": "pnpm --filter web exec vite build --mode desktop --outDir dist-desktop",
+    "frontendDist": "../../web/dist-desktop",
+    "removeUnusedCommands": true
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "scrin",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 400,
+        "minHeight": 520,
+        "resizable": true,
+        "center": true,
+        "visible": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#14161d"
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost",
+        "img-src": "'self' data:",
+        "style-src": "'self'",
+        "script-src": "'self'"
+      },
+      "devCsp": {
+        "default-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost ws://localhost:5182 http://localhost:5182",
+        "img-src": "'self' data:",
+        "style-src": "'self' 'unsafe-inline'",
+        "script-src": "'self'"
+      },
+      "freezePrototype": true
+    },
+    "trayIcon": null
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "publisher": "scrin contributors",
+    "copyright": "AGPL-3.0-only © scrin contributors",
+    "license": "AGPL-3.0-only",
+    "category": "Utility",
+    "shortDescription": "Open-source remote desktop",
+    "longDescription": "scrin is an open-source (AGPL-3.0) remote desktop: quick connect with an ID and a one-time code, end-to-end encrypted sessions, unattended access and low-latency streaming.",
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": true,
+        "languages": ["English", "Romanian"],
+        "compression": "lzma"
+      },
+      "wix": {
+        "language": ["en-US", "ro-RO"]
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["scrin"] }
+    },
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": ["https://github.com/scrin-app/scrin/releases/latest/download/latest.json"],
+      "pubkey": "REPLACE_WITH_MINISIGN_PUBLIC_KEY"
+    }
+  }
+}

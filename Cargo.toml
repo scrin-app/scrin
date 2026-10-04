@@ -7,6 +7,12 @@ members = [
     "crates/scrin-media",
     "crates/scrin-session",
     "crates/scrin-server",
+    "crates/scrin-win",
+    "crates/scrin-ffi",
+    "crates/scrin-wasm",
+    "crates/scrin-engine",
+    "crates/scrin-service",
+    "apps/desktop/src-tauri",
 ]
 
 [workspace.package]

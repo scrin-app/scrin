@@ -1,0 +1,54 @@
+#cloud-config
+# Container-Optimized OS: format/mount the data disk, then run scrin-server as a
+# systemd-managed container. Rendered by Terraform (templatefile).
+
+bootcmd:
+  - |
+    dev=/dev/disk/by-id/google-scrin-data
+    if ! blkid "$dev" >/dev/null 2>&1; then mkfs.ext4 -m 0 -F -E lazy_itable_init=0,lazy_journal_init=0,discard "$dev"; fi
+    mkdir -p ${data_mount}
+    mount -o discard,defaults "$dev" ${data_mount} || true
+    chown 65532:65532 ${data_mount}
+
+write_files:
+  - path: /etc/systemd/system/scrin-server.service
+    permissions: "0644"
+    owner: root
+    content: |
+      [Unit]
+      Description=scrin-server (rendezvous, relay, gateway)
+      Wants=network-online.target
+      After=network-online.target docker.service
+
+      [Service]
+      Environment="HOME=/home/scrin"
+      ExecStartPre=/bin/mkdir -p /home/scrin
+      ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries=${repo_host}
+      ExecStartPre=-/usr/bin/docker rm -f scrin-server
+      ExecStartPre=/usr/bin/docker pull ${image}
+      ExecStart=/usr/bin/docker run --rm --name scrin-server \
+        -p 443:443/tcp -p 443:443/udp -p 80:80/tcp -p 7842:7842/udp \
+        -v ${data_mount}:/data \
+        -e SCRIN_ROLES=rendezvous,relay,gateway \
+        -e SCRIN_TLS=acme \
+        -e SCRIN_ACME_DOMAINS=${domain} \
+        -e SCRIN_ACME_CONTACT=${acme_contact} \
+        -e SCRIN_ACME_STAGING=${acme_staging} \
+        -e SCRIN_RELAY_URLS=https://${domain} \
+        -e SCRIN_HTTP_LISTEN=0.0.0.0:80 \
+        -e SCRIN_QAD_LISTEN=0.0.0.0:7842 \
+        -e SCRIN_GW_MAX_BPS=${gw_max_bps} \
+        --log-driver=gcplogs \
+        ${image}
+      ExecStop=/usr/bin/docker stop scrin-server
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - sysctl -w net.core.rmem_max=7500000
+  - sysctl -w net.core.wmem_max=7500000
+  - systemctl daemon-reload
+  - systemctl enable --now scrin-server.service

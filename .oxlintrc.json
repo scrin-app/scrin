@@ -8,6 +8,7 @@
   "env": { "browser": true, "es2024": true },
   "ignorePatterns": [
     "**/dist/**",
+    "**/dist-*/**",
     "**/node_modules/**",
     "**/routeTree.gen.ts",
     "target/**",

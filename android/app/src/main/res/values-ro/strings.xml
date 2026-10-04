@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="action_back">Înapoi</string>
+    <string name="action_cancel">Anulează</string>
+    <string name="action_done">Gata</string>
+    <string name="action_allow">Permite</string>
+    <string name="action_save">Salvează</string>
+    <string name="action_send">Trimite</string>
+
+    <string name="home_tagline">Desktop la distanță, open source</string>
+    <string name="home_my_device">Acest dispozitiv</string>
+    <string name="home_your_id">ID-ul tău</string>
+    <string name="home_one_time_code">Cod de unică folosință</string>
+    <string name="home_code_hint">Merge o singură dată. Dă-l doar cuiva în care ai încredere.</string>
+    <string name="home_code_expires_in">Codul expiră în %1$s</string>
+    <string name="home_new_code">Cod nou</string>
+    <string name="home_copy_id">Copiază linkul de conectare</string>
+    <string name="home_share_title">Trimite datele de acces</string>
+    <string name="home_share_text">Conectează-te la dispozitivul meu cu scrin.\nLink: %1$s\nCod de unică folosință: %2$s</string>
+    <string name="home_allow_control">Permite controlul</string>
+    <string name="home_connect_title">Controlează alt dispozitiv</string>
+    <string name="home_connect_body">Introdu linkul sau ID-ul partenerului și codul de unică folosință afișat pe ecranul lui.</string>
+    <string name="home_partner_id">Linkul sau ID-ul partenerului</string>
+    <string name="home_partner_id_hint">Un link scrin sau un ID hex de 64 de caractere</string>
+    <string name="home_code_field">Cod de unică folosință</string>
+    <string name="home_e2e_note">Criptat cap la cap. Codul nu părăsește niciunul dintre dispozitive.</string>
+    <string name="home_connect_action">Conectează-te</string>
+
+    <string name="error_target_empty">Introdu linkul sau ID-ul partenerului.</string>
+    <string name="error_target_invalid">Acesta nu pare un link sau un ID scrin.</string>
+    <string name="error_code_incomplete">Codul are 8 caractere, de ex. ABCD-EFGH.</string>
+
+    <string name="connecting_title">Conectare</string>
+    <string name="step_connecting">Se contactează dispozitivul</string>
+    <string name="step_pairing">Se verifică în siguranță codul</string>
+    <string name="step_waiting_host">Se așteaptă acceptul celeilalte persoane</string>
+    <string name="step_active">Conectat</string>
+
+    <string name="sas_title">Comparați aceste emoji</string>
+    <string name="sas_body_controller">Roagă-l pe celălalt să citească emoji-urile de pe ecranul lui. Trebuie să fie identice.</string>
+    <string name="sas_body_host">Verifică dacă persoana care a cerut accesul vede aceleași emoji.</string>
+    <string name="sas_mismatch_hint">Dacă nu se potrivesc, anulează: cineva poate fi la mijloc.</string>
+    <string name="sas_a11y">Emoji de verificare: %1$s</string>
+
+    <string name="ended_title">Sesiune încheiată</string>
+    <string name="end_cancelled">Ai încheiat sesiunea.</string>
+    <string name="end_rejected">Cealaltă persoană a refuzat.</string>
+    <string name="end_host_stopped">Cealaltă persoană a oprit sesiunea.</string>
+    <string name="end_reported">Sesiunea a fost oprită și raportată.</string>
+    <string name="end_peer_ended">Cealaltă parte a încheiat sesiunea.</string>
+    <string name="end_disconnected">Conexiunea s-a pierdut.</string>
+    <string name="end_time_limit">S-a atins limita de timp a acestei sesiuni.</string>
+    <string name="end_connect_failed">Dispozitivul nu a putut fi contactat. Verifică linkul și rețeaua.</string>
+    <string name="end_pairing_failed">Cod greșit sau expirat. Cere unul nou.</string>
+    <string name="end_timeout">Nu a răspuns nimeni la timp.</string>
+
+    <string name="viewer_waiting_video">Se așteaptă ecranul…</string>
+    <string name="viewer_waiting_video_body">Imaginea apare imediat ce celălalt dispozitiv începe partajarea.</string>
+    <string name="viewer_mode_trackpad">Touchpad</string>
+    <string name="viewer_mode_direct">Atingere</string>
+    <string name="viewer_keyboard">Tastatură</string>
+    <string name="viewer_disconnect">Deconectează</string>
+    <string name="viewer_rtt">%1$d ms</string>
+    <string name="viewer_type_here">Scrie pentru a trimite</string>
+
+    <string name="host_title">Permite controlul de la distanță</string>
+    <string name="host_step_input">1 · Permite controlul prin atingere</string>
+    <string name="host_input_body">Ca un ajutor să poată atinge și scrie pe acest telefon, scrin are nevoie ca serviciul de control de la distanță să fie pornit în setările de Accesibilitate. Fără el poți partaja doar pentru vizualizare.</string>
+    <string name="host_input_enable">Pornește controlul de la distanță</string>
+    <string name="host_input_enabled">Controlul de la distanță este pornit</string>
+    <string name="host_restricted_link">Opțiunea e inactivă? Vezi cum o permiți</string>
+    <string name="host_step_notifications">2 · Afișează notificarea sesiunii</string>
+    <string name="host_notifications_body">Cât timp cineva este conectat, o notificare rămâne vizibilă ca să poți opri sesiunea oricând.</string>
+    <string name="host_step_share">Trimite-i acestea celui care te ajută</string>
+    <string name="host_share_body">Introduce ID-ul tău și acest cod de unică folosință. Tot tu trebuie să accepți.</string>
+    <string name="host_listening">Pregătit. Se așteaptă o cerere de conectare.</string>
+    <string name="host_not_listening">Se pornește…</string>
+    <string name="host_pairing">Cineva se conectează. Se verifică codul…</string>
+    <string name="host_active_title">Ecranul tău este partajat</string>
+    <string name="host_active_with">Conectat cu %1$s</string>
+    <string name="host_stop">Oprește</string>
+    <string name="host_stop_report">Oprește și raportează</string>
+
+    <string name="disclosure_title">Controlul de la distanță folosește Accesibilitatea</string>
+    <string name="disclosure_what">scrin folosește API-ul de Accesibilitate Android doar într-o sesiune pe care o accepți, pentru a efectua atingerile, glisările, acțiunile Înapoi/Acasă și textul trimise de cel care te ajută.</string>
+    <string name="disclosure_data">Citește câmpul de text activ doar pentru a scrie în el. Nimic din ce vede nu este stocat, trimis serverelor scrin sau folosit în alt scop.</string>
+    <string name="disclosure_not">Nu este un instrument de asistență și nu acționează niciodată când nu rulează o sesiune.</string>
+    <string name="disclosure_off">Îl poți opri oricând din Setări › Accesibilitate › scrin control de la distanță.</string>
+    <string name="disclosure_agree">Sunt de acord, deschide setările</string>
+    <string name="disclosure_decline">Nu acum</string>
+
+    <string name="scam_title">Atenție la înșelătorii</string>
+    <string name="scam_body">Băncile, Microsoft, Google, poliția sau curierii nu îți vor cere niciodată să instalezi asta sau să citești un cod. Dacă ți-a cerut asta cineva necunoscut, închide apelul.</string>
+
+    <string name="request_title">Cineva vrea să controleze acest dispozitiv</string>
+    <string name="request_unknown_device">Dispozitiv necunoscut</string>
+    <string name="request_verified">Verificat</string>
+    <string name="request_unverified">Neverificat</string>
+    <string name="request_permissions">Permite-i să</string>
+    <string name="request_anonymous_caps">Sesiunile neverificate se încheie după 60 de minute și nu pot transfera fișiere sau configura acces nesupravegheat.</string>
+    <string name="request_accept">Acceptă</string>
+    <string name="request_accept_in">Acceptă (%1$d)</string>
+    <string name="request_reject">Refuză</string>
+    <string name="request_report">Raportează</string>
+
+    <string name="perm_view">Vadă ecranul</string>
+    <string name="perm_input">Atingă și scrie</string>
+    <string name="perm_clipboard">Folosească clipboardul</string>
+    <string name="perm_chat">Discute prin chat</string>
+    <string name="perm_other">Altele</string>
+
+    <string name="notif_channel_session">Sesiune la distanță</string>
+    <string name="notif_channel_session_desc">Afișată cât timp cineva poate vedea sau controla acest dispozitiv.</string>
+    <string name="notif_session_title">Sesiune la distanță activă — atinge pentru a opri</string>
+    <string name="notif_session_text">Cineva poate vedea acest ecran.</string>
+    <string name="notif_open">Deschide</string>
+    <string name="notif_stop">Oprește</string>
+
+    <string name="a11y_service_label">scrin control de la distanță</string>
+    <string name="a11y_service_summary">Permite unui ajutor acceptat de tine să atingă și să scrie în timpul unei sesiuni scrin.</string>
+    <string name="a11y_service_description">Folosit doar într-o sesiune la distanță pe care ai acceptat-o: efectuează atingerile, glisările, Înapoi/Acasă/Recente și textul trimise de persoana care te ajută. Nu este un instrument de asistență, nu rulează în afara unei sesiuni și nu stochează nimic.</string>
+
+    <string name="settings_title">Setări</string>
+    <string name="settings_appearance">Aspect</string>
+    <string name="settings_theme">Temă</string>
+    <string name="theme_system">Sistem</string>
+    <string name="theme_light">Luminoasă</string>
+    <string name="theme_dark">Întunecată</string>
+    <string name="settings_dynamic_color">Culorile imaginii de fundal</string>
+    <string name="settings_dynamic_color_body">Folosește paleta sistemului în locul accentului scrin.</string>
+    <string name="settings_accent">Accent</string>
+    <string name="settings_language">Limbă</string>
+    <string name="settings_language_system_only">Pe această versiune de Android limba aplicației se alege din sistem.</string>
+    <string name="settings_language_open">Deschide setările de limbă</string>
+    <string name="lang_system">Implicit (sistem)</string>
+    <string name="settings_security">Securitate</string>
+    <string name="settings_fingerprint">Amprenta dispozitivului</string>
+    <string name="settings_network">Rețea</string>
+    <string name="settings_relay_body">Lasă gol pentru releele implicite sau introdu URL-urile releelor tale, separate prin virgulă.</string>
+    <string name="settings_relay_label">URL-uri relee</string>
+    <string name="settings_relay_invalid">Folosește URL-uri https:// separate prin virgulă.</string>
+    <string name="settings_relay_restart">Se aplică la următoarea pornire a scrin.</string>
+    <string name="settings_about">Despre</string>
+
+    <string name="accent_lagoon">Lagună (scrin)</string>
+    <string name="accent_iris">Iris</string>
+    <string name="accent_ocean">Ocean</string>
+    <string name="accent_sky">Cer</string>
+    <string name="accent_teal">Turcoaz</string>
+    <string name="accent_mint">Mentă</string>
+    <string name="accent_lime">Lime</string>
+    <string name="accent_amber">Chihlimbar</string>
+    <string name="accent_tangerine">Mandarină</string>
+    <string name="accent_coral">Coral</string>
+    <string name="accent_rose">Trandafiriu</string>
+    <string name="accent_orchid">Orhidee</string>
+    <string name="accent_violet">Violet</string>
+    <string name="accent_graphite">Grafit</string>
+
+    <string name="trusted_title">Dispozitive de încredere</string>
+    <string name="trusted_body">Aceste dispozitive se pot conecta fără cod. Elimină-le pe cele pe care nu le recunoști.</string>
+    <string name="trusted_empty">Niciun dispozitiv de încredere.</string>
+    <string name="trusted_remove">Elimină %1$s</string>
+    <string name="trust_view_only">Doar vizualizare</string>
+    <string name="trust_support">Asistență</string>
+    <string name="trust_full">Acces complet</string>
+
+    <string name="about_title">Despre scrin</string>
+    <string name="about_version">Versiunea %1$s (%2$s)</string>
+    <string name="about_body">Desktop la distanță cu criptare cap la cap, un cod de unică folosință care nu circulă prin rețea și verificare prin emoji.</string>
+    <string name="about_licence">Licență</string>
+    <string name="about_licence_body">scrin este software liber sub GNU Affero General Public License v3.0 (only). Îl poți folosi, studia, distribui și modifica; dacă rulezi o versiune modificată ca serviciu în rețea, trebuie să oferi codul sursă utilizatorilor ei.</string>
+    <string name="about_read_licence">Citește AGPL-3.0</string>
+    <string name="about_source">Cod sursă</string>
+    <string name="about_third_party">Software terț</string>
+    <string name="about_third_party_body">Include AndroidX și Jetpack Compose (Apache-2.0), Kotlin (Apache-2.0), JNA (Apache-2.0), iconițe Material (Apache-2.0), UniFFI (MPL-2.0), iroh (MIT/Apache-2.0) și crate-urile Rust enumerate în depozitul sursă.</string>
+
+    <string name="restricted_title">Permite setările restricționate</string>
+    <string name="restricted_body">Pe Android 13 și mai nou, aplicațiile instalate din afara unui magazin nu pot porni servicii de Accesibilitate până nu permiți asta o dată.</string>
+    <string name="restricted_step1">Deschide Setări › Accesibilitate și atinge o dată scrin control de la distanță. Android afișează „Setare restricționată”. Atinge OK.</string>
+    <string name="restricted_step2">Deschide Informații despre aplicație pentru scrin (butonul de mai jos).</string>
+    <string name="restricted_step3">Atinge meniul ⋮ din colțul din dreapta sus.</string>
+    <string name="restricted_step4">Atinge „Permite setările restricționate” și confirmă cu PIN-ul sau amprenta.</string>
+    <string name="restricted_step5">Revino la Accesibilitate și pornește scrin control de la distanță.</string>
+    <string name="restricted_open_app_info">Deschide Informații aplicație</string>
+    <string name="restricted_open_a11y">Deschide setările de Accesibilitate</string>
+</resources>

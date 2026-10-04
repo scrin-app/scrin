@@ -1,4 +1,6 @@
 **/dist
+**/dist-*
+apps/desktop/src-tauri/gen
 **/routeTree.gen.ts
 pnpm-lock.yaml
 target

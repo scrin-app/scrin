@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "scrin",
+  "version": "0.1.0",
+  "owner": "Dragos Catalin Vladulescu",
+  "writtenAs": "scrin",
+  "meaning": "scrin = two screens becoming one: the s is drawn as two identical halves (you, them) that meet in the middle bar.",
+  "concept": {
+    "chosen": "A-split-s",
+    "runnersUp": ["B-twin-panes", "C-corner-brackets", "D-screen-code"],
+    "sheet": "sheet/comparison.html",
+    "decidedBy": "Brand Designer agent (user delegated Gates A-E for this run, 2026-10-04)"
+  },
+  "locales": ["en", "ro"],
+  "tagline": {
+    "en": "Connect to any screen, in seconds.",
+    "ro": "Conectare la orice ecran, în câteva secunde."
+  },
+  "accent": { "hue": 178, "chroma": 0.14, "name": "lagoon" },
+  "tokens": {
+    "format": "dtcg-2025.10",
+    "sources": [
+      "tokens/primitives.tokens.json",
+      "tokens/semantic.tokens.json",
+      "tokens/motion.tokens.json"
+    ],
+    "generator": "scripts/build.mjs (palette.mjs + geometry.mjs are the single source)",
+    "contrastPairs": "contrast-pairs.json"
+  },
+  "fonts": [
+    {
+      "family": "Inter Variable",
+      "version": "@fontsource-variable/inter 5.x (Inter 4)",
+      "role": "ui",
+      "licence": "OFL-1.1",
+      "licenceFile": "fonts/OFL-Inter.txt",
+      "files": ["fonts/Inter-latin.woff2", "fonts/Inter-latin-ext.woff2"],
+      "verifiedGlyphs": { "date": "2026-10-04", "mode": "union", "result": "OK (950 code points); each subset alone FAILS - both @font-face rules must ship" }
+    },
+    {
+      "family": "JetBrains Mono Variable",
+      "version": "@fontsource-variable/jetbrains-mono 5.x",
+      "role": "code / IDs / one-time codes",
+      "licence": "OFL-1.1",
+      "licenceFile": "fonts/OFL-JetBrainsMono.txt",
+      "files": ["fonts/JetBrainsMono-latin.woff2", "fonts/JetBrainsMono-latin-ext.woff2"],
+      "verifiedGlyphs": { "date": "2026-10-04", "mode": "union", "result": "OK (405 code points)" }
+    }
+  ],
+  "outputs": {
+    "css": "dist/css/brand.css",
+    "kotlin": "dist/kotlin/BrandTokens.kt",
+    "ts": "dist/ts/tokens.ts",
+    "motion": ["dist/motion/logo.css", "dist/motion/logo-motion.ts", "dist/motion/logo-intro.svg", "dist/motion/logo-thinking.svg", "android/drawable/avd_scrin_splash.xml"],
+    "icons": ["dist/web/", "dist/windows/", "dist/tray/", "android/"],
+    "og": "dist/og/"
+  },
+  "platforms": ["web", "windows", "android", "android-tv", "tray"],
+  "gates": {
+    "contrast": "node brand/scripts/contrast-gate.mjs brand/contrast-pairs.json",
+    "glyphs": "<venv>/python brand/scripts/check-glyphs.py --union brand/fonts/Inter-latin.woff2 brand/fonts/Inter-latin-ext.woff2",
+    "legibility": "node brand/scripts/legibility.mjs"
+  },
+  "consumers": [
+    { "surface": "web app", "path": "apps/web/public/*, apps/web/index.html, apps/web/src/components/logo.tsx", "imports": "dist/web/*, dist/motion/logo-motion.ts" },
+    { "surface": "shared UI theme", "path": "packages/ui/src/theme/{tokens,presets}.ts", "imports": "accent hue 178 / chroma 0.14 (proposal in ROLLOUT.md)" },
+    { "surface": "desktop (Tauri)", "path": "apps/desktop/src-tauri/icons/", "imports": "dist/windows/**, dist/tray/*" },
+    { "surface": "android", "path": "android/app/src/main/res/", "imports": "android/**" }
+  ]
+}

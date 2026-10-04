@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../../node_modules/.cache/tsc/api",
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/**/*",
+    "scripts/**/*",
+    "vitest.config.ts",
+    "tsdown.config.ts",
+    "drizzle.config.ts"
+  ]
+}

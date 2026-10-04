@@ -67,6 +67,7 @@ else {
   @{ Steps = @(
       Step 'cargo fmt' 'cargo fmt --all --check'
       Step 'cargo clippy' 'cargo clippy --workspace --all-targets -- -D warnings'
+      Step 'cargo clippy (android)' 'pwsh -NoProfile -File scripts/clippy-android.ps1'
       Step 'cargo test' 'cargo test --workspace'
       Step 'cargo deny' 'cargo deny check' '.' $(if (Has 'cargo-deny') { '' } else { 'cargo-deny not installed (cargo install --locked cargo-deny)' })
     ) }

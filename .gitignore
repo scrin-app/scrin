@@ -1,6 +1,8 @@
 /target/
 node_modules/
 dist/
+dist-*/
+apps/desktop/src-tauri/gen/
 .turbo/
 *.tsbuildinfo
 .copilot-tmp/

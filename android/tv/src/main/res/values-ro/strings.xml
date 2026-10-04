@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tv_tagline">Controlează un calculator de pe televizor</string>
+    <string name="tv_connect">Conectează-te</string>
+    <string name="tv_share_screen">Partajează acest televizor</string>
+    <string name="tv_connect_soon">Conectarea de pe televizor vine într-o versiune viitoare. Deocamdată folosește aplicația de pe telefon.</string>
+    <string name="tv_host_unsupported">Partajarea ecranului televizorului cere consimțământ pe televizor la fiecare sesiune; vine într-o versiune viitoare.</string>
+</resources>

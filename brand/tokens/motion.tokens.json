@@ -1,0 +1,51 @@
+{
+  "$description": "scrin motion tokens (DTCG 2025.10). UI durations/easing + the logo animation set. build.mjs generates dist/motion/{logo.css,logo-intro.svg,logo-thinking.svg,logo-motion.ts} and android/drawable/avd_scrin_splash.xml from logo.* - edit here only. Every animation has a prefers-reduced-motion fallback (opacity-only, <= reduced.fade).",
+  "duration": {
+    "$type": "duration",
+    "fast": { "$value": { "value": 120, "unit": "ms" } },
+    "base": { "$value": { "value": 200, "unit": "ms" } },
+    "slow": { "$value": { "value": 320, "unit": "ms" } },
+    "brand": { "$value": { "value": 720, "unit": "ms" }, "$description": "logo intro only" }
+  },
+  "easing": {
+    "$type": "cubicBezier",
+    "enter": { "$value": [0.05, 0.7, 0.1, 1], "$description": "M3 emphasized decelerate" },
+    "exit": { "$value": [0.3, 0, 0.8, 0.15], "$description": "M3 emphasized accelerate" },
+    "move": { "$value": [0.2, 0, 0, 1], "$description": "M3 standard" }
+  },
+  "transition": {
+    "$type": "transition",
+    "enter": {
+      "$value": { "duration": "{duration.base}", "delay": { "value": 0, "unit": "ms" }, "timingFunction": "{easing.enter}" }
+    },
+    "exit": {
+      "$value": { "duration": "{duration.fast}", "delay": { "value": 0, "unit": "ms" }, "timingFunction": "{easing.exit}" }
+    }
+  },
+  "reduced": {
+    "$type": "duration",
+    "fade": { "$value": { "value": 150, "unit": "ms" }, "$description": "max cross-fade under prefers-reduced-motion" }
+  },
+  "logo": {
+    "$description": "Logo animation set. Distances are units of the 24-unit mark grid (scale with the icon). The static mark is the final frame of every state.",
+    "ease": { "$type": "cubicBezier", "$value": [0.16, 1, 0.3, 1], "$description": "scrin 'calm arrival' curve - fast start, long soft settle. Logo only." },
+    "intro": { "$type": "duration", "$value": { "value": 720, "unit": "ms" } },
+    "thinking": { "$type": "duration", "$value": { "value": 1200, "unit": "ms" }, "$description": "period" },
+    "success": { "$type": "duration", "$value": { "value": 320, "unit": "ms" } },
+    "error": { "$type": "duration", "$value": { "value": 180, "unit": "ms" } },
+    "hover": { "$type": "duration", "$value": { "value": 140, "unit": "ms" } },
+    "press": { "$type": "duration", "$value": { "value": 120, "unit": "ms" } },
+    "morph": { "$type": "duration", "$value": { "value": 380, "unit": "ms" } },
+    "$extensions": {
+      "app.scrin.logo": {
+        "intro": { "draw": 560, "stagger": 160, "travel": 2, "meaning": "two halves (you, them) arrive from opposite corners and draw into one s" },
+        "thinking": { "period": 1200, "dash": 0.35, "iterations": 4, "reducedPulse": 1000, "meaning": "a signal chases along both halves, half a period apart - data flowing both ways; stops after 4.8 s (< 5 s, WCAG 2.2.2), caller then shows static mark + text" },
+        "success": { "duration": 320, "scale": 1.08, "meaning": "halves lock: one confident pulse" },
+        "error": { "duration": 180, "x": [0, -1, 1, -0.6, 0], "part": 0.6, "meaning": "horizontal head-shake while the halves briefly part at the seam - shape change, not colour only" },
+        "hover": { "duration": 140, "travel": 0.35, "meaning": "halves lean apart by <= 2 px at 128 px" },
+        "press": { "duration": 120, "scale": 0.94 },
+        "morph": { "duration": 380, "meaning": "splash mark -> title-bar mark, shared element (view-transition-name: scrin-mark / Motion layoutId)" }
+      }
+    }
+  }
+}

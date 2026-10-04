@@ -1,0 +1,49 @@
+[package]
+name = "scrin-engine"
+description = "Native host and client engine for scrin desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+scrin-crypto.workspace = true
+scrin-net.workspace = true
+scrin-session.workspace = true
+scrin-media.workspace = true
+scrin-proto.workspace = true
+# Windows capture/encode/decode/input. Its API is not published yet (stub
+# crate built in parallel); the `win` feature only links it until a
+# `MediaBackend` impl lands there.
+scrin-win = { path = "../scrin-win", optional = true }
+iroh.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json = "1.0.151"
+zeroize.workspace = true
+blake3.workspace = true
+data-encoding.workspace = true
+getrandom = "0.3"
+# HTTP resolver for scrin IDs. rustls with ring (the provider iroh already
+# links); no aws-lc, so no cmake/nasm in the build.
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[features]
+default = []
+win = ["dep:scrin-win"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+getrandom = "0.3"
+
+[lints]
+workspace = true

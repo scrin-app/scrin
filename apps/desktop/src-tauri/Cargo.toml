@@ -1,0 +1,55 @@
+[package]
+name = "scrin-desktop"
+description = "scrin desktop app (Tauri shell)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+scrin-engine = { path = "../../../crates/scrin-engine" }
+scrin-proto.workspace = true
+tauri = { version = "2.12.1", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = { version = "2.5.2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2.6.1"
+tauri-plugin-window-state = "2.5.0"
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-notification = "2.5.1"
+tauri-plugin-updater = "2.13.1"
+tauri-plugin-clipboard-manager = "2.4.1"
+tauri-plugin-os = "2.4.0"
+tauri-plugin-process = "2.4.0"
+tauri-plugin-dialog = "2.8.1"
+tauri-plugin-opener = "2.7.0"
+serde.workspace = true
+serde_json = "1.0.151"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+	"Win32_Foundation",
+	"Win32_Graphics_Direct3D",
+	"Win32_Graphics_Direct3D11",
+	"Win32_Graphics_Dxgi",
+	"Win32_Graphics_Dxgi_Common",
+	"Win32_Graphics_Gdi",
+	"Win32_System_LibraryLoader",
+	"Win32_UI_Input_KeyboardAndMouse",
+	"Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[features]
+# Linked by `tauri build` for the release bundle (assets embedded).
+custom-protocol = ["tauri/custom-protocol"]
+# Real Windows capture/encode via scrin-win, once it implements MediaBackend.
+win = ["scrin-engine/win"]
+
+[lints]
+workspace = true

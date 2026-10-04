@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window behind Compose = brand bg.canvas (BrandLight / BrandDark in BrandTokens.kt). -->
+    <color name="window_bg">#F6FBFA</color>
+    <color name="splash_bg">@color/scrin_splash_light</color>
+</resources>

@@ -1,0 +1,208 @@
+{
+  "$description": "Layer 2 - semantic slots per theme. Themes remap only this layer.",
+  "light": {
+    "$type": "color",
+    "bg": {
+      "canvas": {
+        "$value": "{color.neutral.1}"
+      },
+      "surface": {
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            1,
+            0,
+            178
+          ],
+          "hex": "#ffffff"
+        }
+      },
+      "subtle": {
+        "$value": "{color.neutral.3}"
+      }
+    },
+    "fg": {
+      "default": {
+        "$value": "{color.neutral.12}"
+      },
+      "muted": {
+        "$value": "{color.neutral.11}"
+      },
+      "on-accent": {
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.99,
+            0,
+            178
+          ],
+          "hex": "#fcfcfc"
+        }
+      }
+    },
+    "border": {
+      "default": {
+        "$value": "{color.neutral.7}"
+      },
+      "focus": {
+        "$value": "{color.lagoon.9}"
+      }
+    },
+    "accent": {
+      "solid": {
+        "$value": "{color.lagoon.9}"
+      },
+      "solid-hover": {
+        "$value": "{color.lagoon.10}"
+      },
+      "text": {
+        "$value": "{color.lagoon.11}"
+      },
+      "subtle": {
+        "$value": "{color.lagoon.3}"
+      }
+    },
+    "status": {
+      "success": {
+        "bg": {
+          "$value": "{color.success.3}"
+        },
+        "solid": {
+          "$value": "{color.success.9}"
+        },
+        "fg": {
+          "$value": "{color.success.11}"
+        }
+      },
+      "warning": {
+        "bg": {
+          "$value": "{color.warning.3}"
+        },
+        "solid": {
+          "$value": "{color.warning.9}"
+        },
+        "fg": {
+          "$value": "{color.warning.11}"
+        }
+      },
+      "danger": {
+        "bg": {
+          "$value": "{color.danger.3}"
+        },
+        "solid": {
+          "$value": "{color.danger.9}"
+        },
+        "fg": {
+          "$value": "{color.danger.11}"
+        }
+      }
+    }
+  },
+  "dark": {
+    "$type": "color",
+    "bg": {
+      "canvas": {
+        "$value": "{color.neutral-dark.1}"
+      },
+      "surface": {
+        "$value": "{color.neutral-dark.3}"
+      },
+      "subtle": {
+        "$value": "{color.neutral-dark.4}"
+      }
+    },
+    "fg": {
+      "default": {
+        "$value": "{color.neutral-dark.12}"
+      },
+      "muted": {
+        "$value": "{color.neutral-dark.11}"
+      },
+      "on-accent": {
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0.18,
+            0.0112,
+            178
+          ],
+          "hex": "#0c1312"
+        }
+      }
+    },
+    "border": {
+      "default": {
+        "$value": "{color.neutral-dark.7}"
+      },
+      "focus": {
+        "$value": "{color.lagoon-dark.9}"
+      }
+    },
+    "accent": {
+      "solid": {
+        "$value": "{color.lagoon-dark.9}"
+      },
+      "solid-hover": {
+        "$value": "{color.lagoon-dark.10}"
+      },
+      "text": {
+        "$value": "{color.lagoon-dark.11}"
+      },
+      "subtle": {
+        "$value": "{color.lagoon-dark.3}"
+      }
+    },
+    "status": {
+      "success": {
+        "bg": {
+          "$value": "{color.success-dark.3}"
+        },
+        "solid": {
+          "$value": "{color.success-dark.9}"
+        },
+        "fg": {
+          "$value": "{color.success-dark.11}"
+        }
+      },
+      "warning": {
+        "bg": {
+          "$value": "{color.warning-dark.3}"
+        },
+        "solid": {
+          "$value": "{color.warning-dark.9}"
+        },
+        "fg": {
+          "$value": "{color.warning-dark.11}"
+        }
+      },
+      "danger": {
+        "bg": {
+          "$value": "{color.danger-dark.3}"
+        },
+        "solid": {
+          "$value": "{color.danger-dark.9}"
+        },
+        "fg": {
+          "$value": "{color.danger-dark.11}"
+        }
+      }
+    }
+  },
+  "dark-amoled": {
+    "$type": "color",
+    "$description": "AMOLED surface mode: only bg.canvas changes; everything else inherits dark.",
+    "bg": {
+      "canvas": {
+        "$value": {
+          "colorSpace": "oklch",
+          "components": [
+            0,
+            0,
+            178
+          ],
+          "hex": "#000000"
+        }
+      }
+    }
+  }
+}

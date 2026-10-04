@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">scrin</string>
+    <string name="tv_tagline">Control a computer from your TV</string>
+    <string name="tv_connect">Connect</string>
+    <string name="tv_share_screen">Share this TV</string>
+    <string name="tv_connect_soon">Connecting from the TV arrives in a later release. Use the phone app for now.</string>
+    <string name="tv_host_unsupported">Sharing a TV screen needs consent on the TV for every session; it arrives in a later release.</string>
+</resources>

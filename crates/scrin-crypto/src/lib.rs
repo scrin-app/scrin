@@ -8,6 +8,7 @@
 //! - [`sas`]: short authentication string (emoji) both users can compare.
 //! - [`trust`]: MAC-sealed list of controllers allowed unattended access.
 
+pub mod channel;
 pub mod code;
 pub mod identity;
 pub mod pake;

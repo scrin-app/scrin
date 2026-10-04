@@ -6,8 +6,33 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+
+[lib]
+name = "scrin_ffi"
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
+scrin-crypto.workspace = true
+scrin-net.workspace = true
+scrin-session.workspace = true
+scrin-media.workspace = true
+scrin-proto.workspace = true
+iroh.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+data-encoding.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+uniffi = "0.32.2"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi_bindgen.rs"
+required-features = ["cli"]
+
+[features]
+# Builds the `uniffi-bindgen` binary that generates the Kotlin bindings (library mode).
+cli = ["uniffi/cli"]
 
 [lints]
 workspace = true

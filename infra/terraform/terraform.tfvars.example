@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) and fill in. Never commit real values.
+project_id   = "your-gcp-project"
+region       = "europe-west3"
+zone         = "europe-west3-a"
+image_tag    = "0.1.0"
+domain       = "relay.scrin.dragoscatalin.ro"
+acme_contact = "mailto:ops@example.org"
+# DNS is managed elsewhere today: leave empty and create the A record from `static_ip`.
+dns_managed_zone = ""
