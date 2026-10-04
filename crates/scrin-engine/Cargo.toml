@@ -51,7 +51,7 @@ getrandom = "0.3"
 scrin-server = { path = "../scrin-server" }
 # The browser's pairing/channel core, to prove the host interoperates with it.
 scrin-wasm = { path = "../scrin-wasm" }
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 png = "0.18.1"
 tracing-subscriber.workspace = true
