@@ -12,6 +12,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
+#[cfg(windows)]
 use std::time::Duration;
 
 use scrin_engine::api::VideoFrame;

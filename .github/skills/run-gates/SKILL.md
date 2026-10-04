@@ -12,7 +12,7 @@ lane passes without its log.
 
 | Changed | Lanes |
 |---|---|
-| `crates/**`, `Cargo.*` | `rust` (+ `security` for crypto/net/server) |
+| `crates/**`, `Cargo.*`, `apps/desktop/src-tauri/**` | `rust` (+ `security` for crypto/net/server) |
 | `proto/**` | `proto,rust,js,android` |
 | `apps/web/**`, `apps/desktop/src/**`, `packages/**` | `js,size,e2e` |
 | `android/**` | `android,size` |
@@ -50,6 +50,10 @@ rg -n 'error|FAIL|warning:' (Join-Path $d.FullName 'rust.log')
 
 - `rust`: `cargo fmt --all`; fix clippy findings — no blanket `#[allow]`; an allowance needs a
   justification comment. `cargo-deny` failures: licence or advisory — update or replace the crate.
+  Clippy runs for three targets: Windows host, Android (`scripts/clippy-android.ps1`, NDK) and
+  Linux (`scripts/clippy-linux.ps1`, WSL `Ubuntu-24.04` with `libwebkit2gtk-4.1-dev`). Code under
+  `#[cfg(not(windows))]` / `#[cfg(windows)]` is only checked by the matching target: when you gate
+  an item to one OS, gate its imports too. A missing WSL/NDK prints SKIP — not a pass.
 - `js`: oxlint/eslint/tsc errors are fixed, not suppressed; vitest failures reproduced with
   `pnpm vitest run <file>`.
 - `proto`: `buf breaking` failures are real compatibility breaks — revert the break.
