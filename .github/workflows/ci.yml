@@ -133,6 +133,11 @@ jobs:
         with: { toolchain: "1.99.0", components: "clippy,rustfmt" }
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with: { key: "${{ matrix.os }}" }
+      # apps/desktop (Tauri) is a workspace member: on Linux it links webkit2gtk.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
