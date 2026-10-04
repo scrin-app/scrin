@@ -364,11 +364,12 @@ mod tests {
     #[test]
     fn debug_redacts_the_secret() {
         let p = Passphrase::generate(9).expect("rng");
-        let dbg = format!("{p:?}");
-        assert!(dbg.contains("<redacted>"));
-        for w in &p.words(Lang::En)[2..] {
-            assert!(!dbg.contains(w));
-        }
+        // Exact text: a substring check flakes when a secret word ("red")
+        // happens to occur inside "<redacted>".
+        assert_eq!(
+            format!("{p:?}"),
+            r#"Passphrase { locator: 9, secret: "<redacted>" }"#
+        );
     }
 
     #[test]

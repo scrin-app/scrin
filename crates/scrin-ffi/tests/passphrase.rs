@@ -130,7 +130,13 @@ fn dictated_words_pair_two_cores_through_the_server_once() {
     let phrase = host.new_passphrase("ro-RO".into()).unwrap();
     assert_eq!(phrase.words.split(' ').count(), 5);
     assert!(phrase.expires_in_s > 0);
-    assert!(!format!("{phrase:?}").contains(&phrase.words));
+    assert_eq!(
+        format!("{phrase:?}"),
+        format!(
+            r#"PassphraseInfo {{ words: "<redacted>", expires_in_s: {} }}"#,
+            phrase.expires_in_s
+        )
+    );
 
     let typed = scrin_crypto::phrase::fold(&phrase.words).to_uppercase();
     let (cl, crx) = L::new();
