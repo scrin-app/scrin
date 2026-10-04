@@ -47,3 +47,36 @@ export {
 } from './components/display';
 export { CodeDisplay, CountdownRing } from './components/code-display';
 export { SasEmoji, SAS_EMOJI } from './components/sas-emoji';
+export {
+  PERMISSIONS,
+  PERMISSION_LABEL_KEY,
+  ANONYMOUS_FORBIDDEN,
+  ANONYMOUS_MAX_MINUTES,
+  defaultAllowed,
+  type PermissionName,
+  type SessionKindName,
+} from './components/permissions';
+export {
+  pushHostEvent,
+  dismissIncomingRequest,
+  useIncomingRequest,
+  getHostRoleActions,
+  setHostRoleActions,
+  type IncomingRequest,
+  type HostRoleActions,
+} from './components/host-role';
+export { RequestDialog, type RequestDialogProps } from './components/request-dialog';
+export {
+  MorphToolbar,
+  ToolbarButton,
+  ToolbarSeparator,
+  TOOLBAR_EDGES,
+  type ToolbarEdge,
+} from './components/morph-toolbar';
+export {
+  loadHostExtras,
+  type HostExtras,
+  type StreamQuality,
+  type TrustedPeer,
+  type UpdateCheck,
+} from './components/host-extras';

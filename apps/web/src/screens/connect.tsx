@@ -28,7 +28,7 @@ import {
 import { useEffect, useState } from 'react';
 
 import { Logo } from '../components/logo';
-import { useConnectFlow } from '../lib/engine';
+import { PHRASE_TARGET, useConnectFlow } from '../lib/engine';
 import { usePending, usePrefs } from '../lib/prefs';
 
 const STEPS: {
@@ -109,9 +109,11 @@ function ConnectAttempt({ id, onRetry }: { id: string; onRetry: () => void }) {
   }, [code, id, navigate]);
 
   const connectedAndVerified = state.stage === 'connected' && state.sasConfirmed && !state.error;
+  const isPhrase = id === PHRASE_TARGET;
   useEffect(() => {
     if (!connectedAndVerified || !state.sessionId) return undefined;
-    addRecent({ id, name: formatScrinId(id), at: Date.now() });
+    // A passphrase is single-use: there is no ID worth remembering.
+    if (!isPhrase) addRecent({ id, name: formatScrinId(id), at: Date.now() });
     const timer = setTimeout(() => {
       void navigate({
         to: '/session/$id',
@@ -121,7 +123,7 @@ function ConnectAttempt({ id, onRetry }: { id: string; onRetry: () => void }) {
       });
     }, 700);
     return () => clearTimeout(timer);
-  }, [connectedAndVerified, state.sessionId, id, navigate, addRecent]);
+  }, [connectedAndVerified, state.sessionId, id, isPhrase, navigate, addRecent]);
 
   const activeIndex = STEPS.findIndex((s) => s.stage === state.stage);
   // The connected step only "completes" once the human confirmed the emoji.
@@ -153,7 +155,7 @@ function ConnectAttempt({ id, onRetry }: { id: string; onRetry: () => void }) {
       >
         <div className="text-center">
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            {t('connect.title', { id: formatScrinId(id) })}
+            {isPhrase ? t('connect.titlePhrase') : t('connect.title', { id: formatScrinId(id) })}
           </h1>
           {state.route ? (
             <p className="mt-1 text-sm text-muted">

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use scrin_crypto::channel::{self, Opener, Ordering, Sealer, Side};
 use scrin_crypto::identity::{DeviceId, Identity};
 use scrin_crypto::pake::{Paired, Pairing, Role};
-use scrin_media::fec::{CompletedFrame, FrameReassembler, MediaKind, ReassemblyStats};
+use scrin_media::fec::{CompletedFrame, FrameReassembler, MediaKind, ReassemblyStats, ShardHeader};
 use zeroize::Zeroizing;
 
 /// `Paired::export` context of the inner channel secret.
@@ -231,25 +231,39 @@ impl Lanes {
     }
 }
 
-/// Video-only view of the FEC reassembler.
+/// FEC reassembly of the media the browser plays: H.264 video and Opus
+/// audio. Each kind has its own reassembler because frame ids are counted
+/// per stream (an audio packet and a video frame may share an id).
 #[derive(Debug, Default)]
-pub struct VideoReassembler {
-    inner: FrameReassembler,
+pub struct MediaReassembler {
+    video: FrameReassembler,
+    audio: FrameReassembler,
 }
 
-impl VideoReassembler {
-    /// Feeds one (already opened) shard datagram. Audio and malformed shards
-    /// yield `None`; malformed ones count in `stats().invalid_shards`.
+impl MediaReassembler {
+    /// Feeds one (already opened) shard datagram; returns a frame (video or
+    /// audio, see `CompletedFrame::kind`) once complete. Malformed shards
+    /// yield `None` and count in `stats().invalid_shards`.
     pub fn push(&mut self, datagram: &[u8]) -> Option<CompletedFrame> {
-        match self.inner.push(datagram) {
-            Ok(Some(f)) if f.kind == MediaKind::Video => Some(f),
-            _ => None,
-        }
+        let audio = ShardHeader::decode(datagram).is_ok_and(|h| h.kind == MediaKind::Audio);
+        let (r, want) = if audio {
+            (&mut self.audio, MediaKind::Audio)
+        } else {
+            (&mut self.video, MediaKind::Video)
+        };
+        r.push(datagram).ok().flatten().filter(|f| f.kind == want)
     }
 
+    /// Video counters (malformed shards of any kind count here).
     #[must_use]
     pub fn stats(&self) -> ReassemblyStats {
-        self.inner.stats()
+        self.video.stats()
+    }
+
+    /// Audio counters.
+    #[must_use]
+    pub fn audio_stats(&self) -> ReassemblyStats {
+        self.audio.stats()
     }
 }
 
@@ -323,22 +337,30 @@ mod tests {
     }
 
     #[test]
-    fn reassembler_yields_video_only() {
-        let mut r = VideoReassembler::default();
+    fn reassembler_separates_audio_and_video() {
+        let mut r = MediaReassembler::default();
         let enc = FrameEncoder::new(MediaKind::Video, 0.0).expect("enc");
-        let audio = FrameEncoder::new(MediaKind::Audio, 0.0).expect("enc");
-        for s in audio.encode(9, false, b"opus").expect("shard") {
-            assert!(r.push(&s.to_bytes()).is_none());
+        let audio = FrameEncoder::new(MediaKind::Audio, 0.5).expect("enc");
+        // Same frame id as the video frame below: separate id spaces.
+        let mut got_audio = None;
+        for s in audio.encode(1, false, b"opus packet").expect("shard") {
+            got_audio = got_audio.or(r.push(&s.to_bytes()));
         }
+        let a = got_audio.expect("audio frame");
+        assert_eq!(a.kind, MediaKind::Audio);
+        assert_eq!(a.data, b"opus packet");
         let frame = vec![7u8; 3000];
         let mut out = None;
         for s in enc.encode(1, true, &frame).expect("shard") {
             out = out.or(r.push(&s.to_bytes()));
         }
         let f = out.expect("frame");
+        assert_eq!(f.kind, MediaKind::Video);
         assert!(f.keyframe);
         assert_eq!(f.data, frame);
         assert!(r.push(&[1, 2, 3]).is_none());
         assert_eq!(r.stats().invalid_shards, 1);
+        assert_eq!(r.stats().completed, 1);
+        assert_eq!(r.audio_stats().completed, 1);
     }
 }

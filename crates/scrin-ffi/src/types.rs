@@ -76,6 +76,24 @@ pub struct CodeInfo {
     pub expires_in_s: u32,
 }
 
+/// Five dictated words (D24) for the host screen. Never log `words`.
+#[derive(Clone, uniffi::Record)]
+pub struct PassphraseInfo {
+    /// Space-separated, in the requested language.
+    pub words: String,
+    /// Seconds until the server forgets the locator (words 1–2).
+    pub expires_in_s: u32,
+}
+
+impl std::fmt::Debug for PassphraseInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PassphraseInfo")
+            .field("words", &"<redacted>")
+            .field("expires_in_s", &self.expires_in_s)
+            .finish()
+    }
+}
+
 /// What the host shares with a controller (besides the code).
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct HostInfo {

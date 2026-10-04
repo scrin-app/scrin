@@ -5,12 +5,14 @@ import android.view.SurfaceView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -44,15 +46,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -61,6 +68,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Job
@@ -76,8 +84,13 @@ import ro.dragoscatalin.scrin.ui.Format
 import ro.dragoscatalin.scrin.ui.Keys
 import ro.dragoscatalin.scrin.ui.TouchMapper
 import ro.dragoscatalin.scrin.ui.TouchMode
+import ro.dragoscatalin.scrin.ui.VRect
+import ro.dragoscatalin.scrin.ui.Zoom
 import ro.dragoscatalin.scrin.ui.components.ScrinIcons
+import ro.dragoscatalin.scrin.ui.letterbox
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun ViewerScreen(hub: SessionHub, onClose: () -> Unit) {
@@ -85,16 +98,20 @@ fun ViewerScreen(hub: SessionHub, onClose: () -> Unit) {
     var mode by remember { mutableStateOf(TouchMode.DIRECT) }
     var keyboard by remember { mutableStateOf(false) }
     var videoSize by remember { mutableStateOf(ui.video?.let { it.width.toInt() to it.height.toInt() }) }
+    var viewport by remember { mutableStateOf(0 to 0) }
+    var zoom by remember { mutableStateOf(Zoom()) }
     val canInput = SessionPermission.INPUT in ui.granted
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding(), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding().clipToBounds().onSizeChanged { viewport = it.width to it.height }) {
             val ratio = videoSize?.let { (w, h) -> if (w > 0 && h > 0) w.toFloat() / h else null } ?: (16f / 9f)
-            // aspectRatio picks the largest size of this ratio that fits: letterbox, touch = video rect.
-            Box(Modifier.aspectRatio(ratio)) {
-                RemoteSurface(hub) { w, h -> videoSize = w to h }
-                TouchLayer(hub, mode, canInput)
+            // Letterboxed base rectangle; the zoom scales and pans the picture inside the viewport.
+            val base = letterbox(viewport.first.toFloat(), viewport.second.toFloat(), ratio)
+            val rect = zoom.rect(base)
+            Box(Modifier.placeAt(rect)) {
+                RemoteSurface(hub, visiblePart(rect, viewport.first, viewport.second)) { w, h -> videoSize = w to h }
             }
+            TouchLayer(hub, mode, canInput, base, zoom) { zoom = it }
         }
         if (ui.video == null) {
             Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -108,6 +125,8 @@ fun ViewerScreen(hub: SessionHub, onClose: () -> Unit) {
             onMode = { mode = it },
             canInput = canInput,
             onKeyboard = { keyboard = !keyboard },
+            zoomed = zoom.zoomed,
+            onFit = { zoom = Zoom() },
             onClose = onClose,
         )
         ui.stats?.let { StatsChip(it, Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(top = 76.dp, end = 12.dp)) }
@@ -122,64 +141,111 @@ fun ViewerScreen(hub: SessionHub, onClose: () -> Unit) {
     }
 }
 
-/** Gestures on the video rect → mouse events (see [TouchMapper]). */
+/** Lays the content out at `r` (viewport pixels), even when `r` is larger than the viewport. */
+private fun Modifier.placeAt(r: VRect): Modifier = layout { m, c ->
+    val w = r.width.roundToInt().coerceAtLeast(1)
+    val h = r.height.roundToInt().coerceAtLeast(1)
+    val p = m.measure(Constraints.fixed(w, h))
+    layout(c.maxWidth, c.maxHeight) { p.place(r.left.roundToInt(), r.top.roundToInt()) }
+}
+
+private enum class Multi { NONE, UNDECIDED, PINCH, SCROLL }
+
+/** The part of `r` inside the viewport, in `r`'s own coordinates (SurfaceView clip bounds). */
+private fun visiblePart(r: VRect, vw: Int, vh: Int) = android.graphics.Rect(
+    (-r.left).roundToInt().coerceAtLeast(0),
+    (-r.top).roundToInt().coerceAtLeast(0),
+    (vw - r.left).roundToInt().coerceAtMost(r.width.roundToInt()),
+    (vh - r.top).roundToInt().coerceAtMost(r.height.roundToInt()),
+)
+
+/**
+ * Gestures over the whole viewport → mouse events (see [TouchMapper]) relative to the
+ * zoomed picture. Two fingers: pinch = zoom/pan the picture locally (also any two-finger drag
+ * while zoomed in), a two-finger drag at 1× = wheel, a two-finger tap = right click.
+ */
 @Composable
-private fun TouchLayer(hub: SessionHub, mode: TouchMode, canInput: Boolean) {
+private fun TouchLayer(hub: SessionHub, mode: TouchMode, canInput: Boolean, base: VRect, zoom: Zoom, onZoom: (Zoom) -> Unit) {
     val mapper = remember { TouchMapper() }
     val scope = rememberCoroutineScope()
     val longPressMs = LocalViewConfiguration.current.longPressTimeoutMillis
+    val baseNow by rememberUpdatedState(base)
+    val zoomNow by rememberUpdatedState(zoom)
+    val setZoom by rememberUpdatedState(onZoom)
     Box(
         Modifier.fillMaxSize().pointerInput(canInput, mode) {
-            if (!canInput) return@pointerInput
             mapper.mode = mode
+            fun send(events: List<RemoteInput>) { if (canInput) hub.sendInputs(events) }
             awaitEachGesture {
                 val first = awaitFirstDown(requireUnconsumed = false)
-                val w = size.width.toFloat()
-                val h = size.height.toFloat()
-                hub.sendInputs(mapper.down(first.position.x, first.position.y, w, h))
+                var r = zoomNow.rect(baseNow)
+                send(mapper.down(first.position.x - r.left, first.position.y - r.top, r.width, r.height))
                 var timer: Job? = scope.launch {
                     delay(longPressMs)
-                    if (mapper.longPressPending) hub.sendInputs(mapper.longPress())
+                    if (mapper.longPressPending) send(mapper.longPress())
                 }
-                var twoFinger = false
-                var twoFingerMoved = 0f
+                var multi = Multi.NONE
+                var zoomAcc = 1f
+                var panAcc = Offset.Zero
                 var last = first.position
                 while (true) {
                     val ev = awaitPointerEvent(PointerEventPass.Main)
                     val pressed = ev.changes.filter { it.pressed }
                     if (pressed.isEmpty()) break
-                    if (pressed.size >= 2 && !twoFinger) {
-                        twoFinger = true
+                    if (pressed.size >= 2 && multi == Multi.NONE) {
+                        multi = Multi.UNDECIDED
                         timer?.cancel()
                         timer = null
-                        hub.sendInputs(mapper.cancel())
+                        send(mapper.cancel())
                     }
-                    val c = pressed.first()
-                    val d = c.positionChange()
-                    if (twoFinger) {
-                        twoFingerMoved += kotlin.math.abs(d.y)
-                        hub.sendInputs(mapper.scroll(d.y))
+                    if (multi != Multi.NONE) {
+                        val z = ev.calculateZoom()
+                        val pan = ev.calculatePan()
+                        if (multi == Multi.UNDECIDED) {
+                            zoomAcc *= z
+                            panAcc += pan
+                            if (abs(zoomAcc - 1f) > PINCH_THRESHOLD) {
+                                multi = Multi.PINCH
+                            } else if (panAcc.getDistance() > viewConfiguration.touchSlop) {
+                                multi = if (zoomNow.zoomed) Multi.PINCH else Multi.SCROLL
+                            }
+                        }
+                        val c = ev.calculateCentroid(useCurrent = true)
+                        when (multi) {
+                            Multi.PINCH -> if (c != Offset.Unspecified) setZoom(zoomNow.transformed(baseNow, c.x, c.y, z, pan.x, pan.y))
+                            Multi.SCROLL -> send(mapper.scroll(pan.y))
+                            Multi.NONE, Multi.UNDECIDED -> Unit
+                        }
                     } else {
-                        if (kotlin.math.abs(d.x) + kotlin.math.abs(d.y) > 0f) {
-                            hub.sendInputs(mapper.move(c.position.x, c.position.y, d.x, d.y, w, h))
+                        val c = pressed.first()
+                        val d = c.positionChange()
+                        r = zoomNow.rect(baseNow)
+                        if (abs(d.x) + abs(d.y) > 0f) {
+                            send(mapper.move(c.position.x - r.left, c.position.y - r.top, d.x, d.y, r.width, r.height))
                         }
                         last = c.position
                     }
                     ev.changes.forEach { it.consume() }
                 }
                 timer?.cancel()
-                if (twoFinger) {
-                    if (twoFingerMoved < viewConfiguration.touchSlop) hub.sendInputs(mapper.twoFingerTap())
-                } else {
-                    hub.sendInputs(mapper.up(last.x, last.y, w, h))
+                when (multi) {
+                    Multi.UNDECIDED -> send(mapper.twoFingerTap())
+                    Multi.PINCH -> if (!zoomNow.zoomed) setZoom(Zoom())
+                    Multi.SCROLL -> Unit
+                    Multi.NONE -> {
+                        r = zoomNow.rect(baseNow)
+                        send(mapper.up(last.x - r.left, last.y - r.top, r.width, r.height))
+                    }
                 }
             }
         },
     )
 }
 
+private const val PINCH_THRESHOLD = 0.08f
+
 @Composable
-private fun RemoteSurface(hub: SessionHub, onSize: (Int, Int) -> Unit) {
+private fun RemoteSurface(hub: SessionHub, clip: android.graphics.Rect, onSize: (Int, Int) -> Unit) {
     var decoder by remember { mutableStateOf<VideoDecoder?>(null) }
     DisposableEffect(Unit) {
         onDispose {
@@ -208,6 +274,9 @@ private fun RemoteSurface(hub: SessionHub, onSize: (Int, Int) -> Unit) {
                 })
             }
         },
+        // A SurfaceView punches through the window: Compose clipping does not apply, view clip
+        // bounds do (API 33+), so a zoomed picture stays inside the viewer.
+        update = { v -> if (v.clipBounds != clip) v.clipBounds = clip },
     )
 }
 
@@ -218,6 +287,8 @@ private fun ViewerToolbar(
     onMode: (TouchMode) -> Unit,
     canInput: Boolean,
     onKeyboard: () -> Unit,
+    zoomed: Boolean,
+    onFit: () -> Unit,
     onClose: () -> Unit,
 ) {
     Surface(modifier, shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f), tonalElevation = 3.dp) {
@@ -240,6 +311,9 @@ private fun ViewerToolbar(
             }
             FilledIconButton(onClick = onKeyboard, enabled = canInput, modifier = Modifier.size(48.dp)) {
                 Icon(ScrinIcons.Keyboard, contentDescription = stringResource(R.string.viewer_keyboard))
+            }
+            if (zoomed) {
+                FilledTonalButton(onClick = onFit, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.viewer_zoom_fit)) }
             }
             FilledIconButton(
                 onClick = onClose,

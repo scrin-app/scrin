@@ -17,6 +17,9 @@
 //! C→H `PairConfirm`, H→C `PairConfirm` (or `Result` fail), C→H `Result`.
 //! The host consumes the code when the first `PairStart` arrives, before it
 //! learns whether the guess was right: one online guess per code.
+//! The `Hello` intent says which secret is the SPAKE2 password: `0` the
+//! one-time code, `2` the passphrase secret ([`scrin_crypto::phrase`]). Each
+//! is single-use on its own.
 //!
 //! Trusted: C→H `Hello`, H→C `Hello`, H→C `AuthChallenge`, C→H `AuthProof`,
 //! H→C `Result`.
@@ -25,6 +28,7 @@
 //! The peer's [`DeviceId`] always comes from the authenticated QUIC
 //! connection ([`remote_device_id`]), never from a message.
 
+use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -35,6 +39,7 @@ use scrin_crypto::identity::{DeviceId, Identity};
 use scrin_crypto::pake::{Paired, Pairing, Role};
 use scrin_crypto::sas::Sas;
 use scrin_crypto::trust::{Profile, TrustStore};
+use zeroize::Zeroizing;
 
 use crate::endpoint::remote_device_id;
 use crate::framing::{StreamKind, accept_stream, open_stream, read_frame_capped, write_frame};
@@ -56,6 +61,9 @@ const TRUSTED_AUTH_LABEL: &[u8] = b"/trusted-auth v1";
 /// No handshake message comes close to this.
 const MAX_HANDSHAKE_MSG: usize = 4096;
 
+/// How long a refusal waits for the peer to read it before the close.
+const REJECT_FLUSH: Duration = Duration::from_millis(500);
+
 const TAG_HELLO: u8 = 1;
 const TAG_PAIR_START: u8 = 2;
 const TAG_PAIR_CONFIRM: u8 = 3;
@@ -65,6 +73,7 @@ const TAG_AUTH_PROOF: u8 = 6;
 
 const INTENT_PAIR: u8 = 0;
 const INTENT_TRUSTED: u8 = 1;
+const INTENT_PHRASE: u8 = 2;
 
 /// Why a peer refused. Travels as one byte; unknown values are preserved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,7 +241,12 @@ impl ControlStream {
 
     async fn reject(&mut self, reason: RejectReason) {
         // Best effort: the error we return matters more than the peer's copy.
-        let _ = self.send(&Msg::Result(Some(reason))).await;
+        // Callers close the connection right after; finish the stream and
+        // wait (bounded) until the peer has it, or it sees "connection lost"
+        // instead of the reason.
+        if self.send(&Msg::Result(Some(reason))).await.is_ok() && self.send.finish().is_ok() {
+            let _ = tokio::time::timeout(REJECT_FLUSH, self.send.stopped()).await;
+        }
     }
 }
 
@@ -263,10 +277,13 @@ pub struct TrustedOutcome {
     pub control: ControlStream,
 }
 
-/// Host-side holder of the one-time code. The first attempt takes it.
+/// Host-side holder of the one-time code and, optionally, the passphrase
+/// secret. The first attempt against either takes it.
 #[derive(Debug)]
 pub struct HostCode {
     slot: Mutex<Option<OneTimeCode>>,
+    phrase: Mutex<Option<Zeroizing<String>>>,
+    phrase_used: AtomicBool,
 }
 
 impl HostCode {
@@ -274,15 +291,40 @@ impl HostCode {
     pub fn new(code: OneTimeCode) -> Self {
         Self {
             slot: Mutex::new(Some(code)),
+            phrase: Mutex::new(None),
+            phrase_used: AtomicBool::new(false),
         }
     }
 
+    /// Arms the passphrase secret (the SPAKE2 password from
+    /// [`scrin_crypto::phrase::Passphrase::pake_password`]).
+    pub fn set_phrase(&self, password: Zeroizing<String>) {
+        *self.phrase.lock().unwrap_or_else(PoisonError::into_inner) = Some(password);
+    }
+
+    /// Disarms the passphrase (disabled, or about to be re-drawn).
+    pub fn clear_phrase(&self) {
+        *self.phrase.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
+    /// Whether a passphrase secret is armed and unused.
+    #[must_use]
+    pub fn has_phrase(&self) -> bool {
+        self.phrase
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+
+    /// True once the code was used; a used passphrase also counts, so the
+    /// owner rotates both together.
     #[must_use]
     pub fn is_consumed(&self) -> bool {
         self.slot
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .is_none()
+            || self.phrase_used.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Takes the code. Afterwards every attempt fails with [`NetError::CodeConsumed`].
@@ -298,27 +340,44 @@ impl HostCode {
         }
         Ok(code)
     }
+
+    fn take_phrase(&self) -> Result<Zeroizing<String>> {
+        let pw = self
+            .phrase
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .ok_or(NetError::CodeConsumed)?;
+        self.phrase_used
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(pw)
+    }
 }
 
 /// Host side of quick connect. `me` is this endpoint's device id.
 pub async fn host_pair(conn: &Connection, me: DeviceId, code: &HostCode) -> Result<PairOutcome> {
     timed(async {
-        let mut ctl = host_hello(conn, INTENT_PAIR).await?;
+        let (mut ctl, intent) = host_hello_any(conn, &[INTENT_PAIR, INTENT_PHRASE]).await?;
         let peer = remote_device_id(conn);
 
         let Msg::PairStart(peer_msg) = ctl.recv().await? else {
             return Err(NetError::Protocol("expected PairStart"));
         };
-        // Consumed here, before the outcome is known: one guess per code.
-        let code = match code.take() {
-            Ok(c) => c,
+        // Consumed here, before the outcome is known: one guess per secret.
+        let secret = if intent == INTENT_PHRASE {
+            code.take_phrase()
+        } else {
+            code.take().map(|c| Zeroizing::new(c.as_str().to_owned()))
+        };
+        let secret = match secret {
+            Ok(s) => s,
             Err(e) => {
                 ctl.reject(RejectReason::CodeUnavailable).await;
                 return Err(e);
             }
         };
-        let (pairing, my_msg) = Pairing::start(code.as_str(), Role::Host, me, peer);
-        drop(code);
+        let (pairing, my_msg) = Pairing::start(secret.as_str(), Role::Host, me, peer);
+        drop(secret);
         ctl.send(&Msg::PairStart(my_msg)).await?;
         let Ok(paired) = pairing.finish(&peer_msg) else {
             ctl.reject(RejectReason::WrongCode).await;
@@ -355,11 +414,30 @@ pub async fn controller_pair(
     typed_code: &str,
 ) -> Result<PairOutcome> {
     let code = normalize(typed_code)?;
+    controller_pair_with(conn, me, code.as_str(), INTENT_PAIR).await
+}
+
+/// Controller side of passphrase connect. `password` is
+/// [`scrin_crypto::phrase::Parsed::password`].
+pub async fn controller_pair_phrase(
+    conn: &Connection,
+    me: DeviceId,
+    password: &str,
+) -> Result<PairOutcome> {
+    controller_pair_with(conn, me, password, INTENT_PHRASE).await
+}
+
+async fn controller_pair_with(
+    conn: &Connection,
+    me: DeviceId,
+    secret: &str,
+    intent: u8,
+) -> Result<PairOutcome> {
     timed(async {
-        let mut ctl = controller_hello(conn, INTENT_PAIR).await?;
+        let mut ctl = controller_hello(conn, intent).await?;
         let peer = remote_device_id(conn);
 
-        let (pairing, my_msg) = Pairing::start(code.as_str(), Role::Controller, me, peer);
+        let (pairing, my_msg) = Pairing::start(secret, Role::Controller, me, peer);
         ctl.send(&Msg::PairStart(my_msg)).await?;
         let peer_msg = match ctl.recv().await? {
             Msg::PairStart(m) => m,
@@ -506,6 +584,14 @@ async fn controller_hello(conn: &Connection, intent: u8) -> Result<ControlStream
 }
 
 async fn host_hello(conn: &Connection, expected_intent: u8) -> Result<ControlStream> {
+    host_hello_any(conn, &[expected_intent])
+        .await
+        .map(|(ctl, _)| ctl)
+}
+
+/// Accepts the Control stream and a `Hello` whose intent is in `allowed`;
+/// returns the stream and that intent.
+async fn host_hello_any(conn: &Connection, allowed: &[u8]) -> Result<(ControlStream, u8)> {
     let (kind, send, recv) = accept_stream(conn).await?;
     if kind != StreamKind::Control {
         return Err(NetError::Protocol("first stream must be Control"));
@@ -518,17 +604,22 @@ async fn host_hello(conn: &Connection, expected_intent: u8) -> Result<ControlStr
     let Msg::Hello { min, max, intent } = ctl.recv().await? else {
         return Err(NetError::Protocol("expected Hello"));
     };
-    ctl.send(&our_hello(expected_intent)).await?;
+    let answer = if allowed.contains(&intent) {
+        intent
+    } else {
+        allowed.first().copied().unwrap_or(INTENT_PAIR)
+    };
+    ctl.send(&our_hello(answer)).await?;
     let Some(version) = negotiate(min, max) else {
         ctl.reject(RejectReason::VersionMismatch).await;
         return Err(NetError::VersionMismatch);
     };
-    if intent != expected_intent {
+    if !allowed.contains(&intent) {
         ctl.reject(RejectReason::WrongMode).await;
         return Err(NetError::Rejected(RejectReason::WrongMode));
     }
     ctl.version = version;
-    Ok(ctl)
+    Ok((ctl, intent))
 }
 
 fn our_hello(intent: u8) -> Msg {

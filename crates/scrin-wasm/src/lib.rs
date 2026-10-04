@@ -1,7 +1,7 @@
 //! wasm-bindgen bindings of the scrin core for the browser client.
 //!
 //! Exposes the controller side of SPAKE2 pairing, the inner end-to-end
-//! channel and the FEC video reassembler. The browser's device key stays a
+//! channel and the FEC media reassembler. The browser's device key stays a
 //! non-extractable `WebCrypto` key; only its 32-byte public key enters here.
 //! Contract: `docs/protocol/gateway-session.md`.
 
@@ -9,7 +9,8 @@ pub mod core;
 
 use wasm_bindgen::prelude::*;
 
-use crate::core::{ControllerPaired, ControllerPairing, CoreError, Lanes, VideoReassembler};
+use crate::core::{ControllerPaired, ControllerPairing, CoreError, Lanes, MediaReassembler};
+use scrin_media::fec::{MediaKind, ReassemblyStats};
 
 fn js(e: &CoreError) -> JsError {
     JsError::new(&e.to_string())
@@ -147,13 +148,15 @@ impl Channel {
     }
 }
 
-/// One reassembled video access unit (H.264 Annex B).
+/// One reassembled media frame: an H.264 Annex B access unit, or one Opus
+/// packet when `audio` is true.
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct VideoFrame {
     frame_id: u32,
     keyframe: bool,
     recovered: bool,
+    audio: bool,
     data: Vec<u8>,
 }
 
@@ -177,6 +180,13 @@ impl VideoFrame {
         self.recovered
     }
 
+    /// The frame is an Opus packet (media kind 1), not video.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn audio(&self) -> bool {
+        self.audio
+    }
+
     /// Moves the bytes out (the frame is empty afterwards).
     #[wasm_bindgen(js_name = takeData)]
     pub fn take_data(&mut self) -> Vec<u8> {
@@ -184,11 +194,25 @@ impl VideoFrame {
     }
 }
 
-/// FEC reassembler for video shards (`scrin_media::fec`).
+/// FEC reassembler for video and audio shards (`scrin_media::fec`).
 #[wasm_bindgen]
 #[derive(Debug, Default)]
 pub struct Reassembler {
-    inner: VideoReassembler,
+    inner: MediaReassembler,
+}
+
+fn stats_vec(s: ReassemblyStats) -> Vec<f64> {
+    #[expect(clippy::cast_precision_loss)] // counters stay far below 2^53
+    let v = [
+        s.completed,
+        s.recovered,
+        s.lost,
+        s.late_shards,
+        s.duplicate_shards,
+        s.invalid_shards,
+    ]
+    .map(|n| n as f64);
+    v.to_vec()
 }
 
 #[wasm_bindgen]
@@ -205,24 +229,21 @@ impl Reassembler {
             frame_id: f.frame_id,
             keyframe: f.keyframe,
             recovered: f.recovered,
+            audio: f.kind == MediaKind::Audio,
             data: f.data,
         })
     }
 
-    /// `[completed, recovered, lost, late, duplicate, invalid]` counters.
+    /// Video `[completed, recovered, lost, late, duplicate, invalid]` counters.
     #[must_use]
     pub fn stats(&self) -> Vec<f64> {
-        let s = self.inner.stats();
-        #[expect(clippy::cast_precision_loss)] // counters stay far below 2^53
-        let v = [
-            s.completed,
-            s.recovered,
-            s.lost,
-            s.late_shards,
-            s.duplicate_shards,
-            s.invalid_shards,
-        ]
-        .map(|n| n as f64);
-        v.to_vec()
+        stats_vec(self.inner.stats())
+    }
+
+    /// Audio counters, same layout as `stats`.
+    #[wasm_bindgen(js_name = audioStats)]
+    #[must_use]
+    pub fn audio_stats(&self) -> Vec<f64> {
+        stats_vec(self.inner.audio_stats())
     }
 }

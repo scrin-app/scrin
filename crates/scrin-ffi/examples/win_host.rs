@@ -13,6 +13,8 @@
 //! phone (gitignored scratch; the code is single use and expires in 10 minutes).
 //! `--auto-accept` accepts View + Input once the anti-scam delay has passed — a test switch;
 //! without it the runner asks on stdin.
+//! `--safe-input` injects only pointer moves and logs clicks, keys and text without injecting
+//! them, so a live test on a desktop someone is using cannot click or type into their windows.
 
 #[cfg(windows)]
 mod run {
@@ -115,6 +117,7 @@ mod run {
     struct Args {
         out: Option<String>,
         auto_accept: bool,
+        safe_input: bool,
         server: Option<String>,
     }
 
@@ -122,6 +125,7 @@ mod run {
         let mut a = Args {
             out: None,
             auto_accept: false,
+            safe_input: false,
             server: None,
         };
         let mut it = std::env::args().skip(1);
@@ -130,6 +134,7 @@ mod run {
                 "--out" => a.out = it.next(),
                 "--server" => a.server = it.next(),
                 "--auto-accept" => a.auto_accept = true,
+                "--safe-input" => a.safe_input = true,
                 other => eprintln!("ignoring argument {other}"),
             }
         }
@@ -346,10 +351,21 @@ mod run {
                 }
                 Ev::Input(e) => {
                     inputs += 1;
-                    if inputs <= 40 || inputs.is_power_of_two() {
+                    let pointer_only = match &e {
+                        RemoteInput::MouseMove { .. } => true,
+                        RemoteInput::Touch { phase, .. } => *phase == TouchPhase::Move,
+                        _ => false,
+                    };
+                    if !pointer_only || inputs <= 40 || inputs.is_power_of_two() {
                         println!("INPUT #{inputs}: {e:?}");
                     }
-                    if let Err(err) = inject(&mut inj, &e) {
+                    if a.safe_input && !pointer_only {
+                        if let RemoteInput::Touch { x, y, .. } = &e
+                            && let Err(err) = inj.mouse_move_abs(*x, *y)
+                        {
+                            println!("INJECT ERROR: {err}");
+                        }
+                    } else if let Err(err) = inject(&mut inj, &e) {
                         println!("INJECT ERROR: {err}");
                     }
                 }

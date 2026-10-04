@@ -62,6 +62,8 @@ with a modern, fast, accessible UI.
 | D21 | Brand via Brand Designer flow, in parallel | Icons needed for installers/stores |
 | D22 | Test devices: this PC, dragos-vivobook (ssh), Samsung A51 (adb R58N94BMLJY) | Real hardware |
 | D23 | Domain `scrin.dragoscatalin.ro` for now | User choice; bundle ids use `ro.dragoscatalin.scrin` |
+| D24 | Passphrase quick connect: 5 words = 2 locator words (server-allocated, 20 bits, unique among active, 600 s) + 3 secret words (30 bits, host-local SPAKE2 password, single-use, re-drawn on rotation); EN+RO 1024-word lists, identified by 4 folded letters, diacritics optional, mixed languages accepted (ADR-0012) | User request: dictate a few words instead of ID + code; server never sees the secret |
+| D25 | Windows service (`scrin-service`) is optional and explicit: supervises the agent in the console session with a SYSTEM token, follows the secure desktop for already-accepted sessions, `SendSAS` via `SoftwareSASGeneration` (restored on uninstall); pipe ACL SYSTEM-only + launched-PID check | Lock screen / UAC / Ctrl+Alt+Del parity with commercial tools without weakening consent |
 
 ## Open questions
 

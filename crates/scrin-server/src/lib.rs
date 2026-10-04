@@ -170,6 +170,7 @@ fn app_state(
 ) -> Arc<AppState> {
     let mut state = AppState::new(store, metrics);
     state.presence_ttl = cfg.presence_ttl;
+    state.locator_ttl = cfg.locator_ttl.max(1);
     state.abuse_block_threshold = cfg.abuse_block_threshold.max(1);
     state.trust_forwarded = cfg.trust_forwarded;
     state.info = Info {

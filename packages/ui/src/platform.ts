@@ -28,6 +28,14 @@ export interface OneTimeCode {
   expiresAt: number;
 }
 
+/** Five dictated words (D24): two locate the host, three are the secret. */
+export interface Passphrase {
+  /** Space-separated words in the requested language. Never log it. */
+  words: string;
+  /** Epoch ms when the locator expires (the engine renews it before). */
+  expiresAt: number;
+}
+
 export type ConnectStage = 'locating' | 'securing' | 'awaiting-approval' | 'connected';
 export type ConnectErrorKind =
   'offline' | 'wrong-code' | 'rejected' | 'timeout' | 'network-blocked' | 'sas-mismatch';
@@ -70,7 +78,20 @@ export interface SessionEngine {
   getMyId(): Promise<string>;
   getCode(): Promise<OneTimeCode>;
   regenerateCode(): Promise<OneTimeCode>;
-  /** Starts the connect flow; progress and errors arrive through `onEvent`. */
+  /**
+   * Host only (D24): show a passphrase in `lang` (`en`, `ro`), or `null` to
+   * stop. Resolves with the current phrase once the server allocated it;
+   * absent where this device cannot host or has no rendezvous server.
+   */
+  setPassphrase?(lang: string | null): Promise<Passphrase | null>;
+  /** Host only: the passphrase on screen now (re-drawn after each use). */
+  getPassphrase?(): Promise<Passphrase | null>;
+  /** Whether `connect` accepts a five-word passphrase as `id`. */
+  readonly supportsPassphrase?: boolean;
+  /**
+   * Starts the connect flow; `id` may also be a five-word passphrase (then
+   * `code` is ignored). Progress and errors arrive through `onEvent`.
+   */
   connect(id: string, code: string): Promise<ConnectHandle>;
   confirmSas(sessionId: string, matches: boolean): Promise<void>;
   sendKeys(sessionId: string, combo: SpecialKey): Promise<void>;

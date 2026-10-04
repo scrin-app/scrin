@@ -1,18 +1,34 @@
 /**
  * Binds a live browser session to a `<canvas>`: video (WebCodecs → WebGL2),
- * input capture, 50 ms `BitrateFeedback`, 1 s `Ping`, and a `stats` event per
- * second for the overlay. Import lazily from the session screen.
+ * host audio (WebCodecs Opus → AudioWorklet jitter buffer), keyboard/mouse
+ * and touch input, text clipboard sync, 50 ms `BitrateFeedback`, 1 s `Ping`,
+ * and a `stats` event per second for the overlay. Import lazily from the
+ * session screen; the UI drives audio/touch/clipboard through
+ * {@link SessionControls}.
  */
-import type { Incoming } from '@scrin/protocol';
+import { PERMISSION, type Incoming } from '@scrin/protocol';
 
+import { AudioPipeline, webAudio, type AudioControls } from './audio';
+import { ClipboardSync, webClipboard, type ClipboardControls } from './clipboard';
 import { createRenderer } from './render';
 import { attachInput } from './input';
 import { whenSession, type LiveSession } from './registry';
+import { attachTouch, type TouchControls, type TouchMode } from './touch';
 import { VideoPipeline, webCodecs } from './video';
+
+/** What the session UI can control once the canvas is live. */
+export interface SessionControls {
+  readonly audio: AudioControls;
+  readonly input: TouchControls;
+  /** `null` when the browser has no clipboard API. */
+  readonly clipboard: ClipboardControls | null;
+}
 
 export interface AttachResult {
   /** Stops everything; safe to call more than once. */
   detach(): void;
+  /** Controls of the bound session; `null` until it is live. */
+  readonly controls: SessionControls | null;
 }
 
 export interface AttachOptions {
@@ -22,13 +38,29 @@ export interface AttachOptions {
   onLive?: () => void;
   /** Called when the first frame was drawn. */
   onFirstFrame?: () => void;
+  /** Called once with the session's controls (audio, touch, clipboard). */
+  onControls?: (controls: SessionControls) => void;
+  /** Initial touch mode; default `direct`. */
+  touchMode?: TouchMode;
 }
 
 const FEEDBACK_MS = 50;
 const PING_MS = 1000;
 const nowMs = () => performance.now();
 
-function bind(live: LiveSession, canvas: HTMLCanvasElement, opts: AttachOptions): () => void {
+const controlsBySession = new Map<string, SessionControls>();
+
+/** Controls of a session whose canvas is attached, or `undefined`. */
+export function getSessionControls(sessionId: string): SessionControls | undefined {
+  return controlsBySession.get(sessionId);
+}
+
+function bind(
+  live: LiveSession,
+  canvas: HTMLCanvasElement,
+  opts: AttachOptions,
+  setControls: (c: SessionControls | null) => void,
+): () => void {
   const codecs = webCodecs();
   const renderer = createRenderer(canvas);
   if (!codecs || !renderer) {
@@ -54,27 +86,82 @@ function bind(live: LiveSession, canvas: HTMLCanvasElement, opts: AttachOptions)
   const onVideo = (frameId: number, keyframe: boolean, data: Uint8Array) => {
     video.push(frameId, keyframe, data);
   };
+
+  const audio = new AudioPipeline(webAudio());
+  const onAudio = (frameId: number, data: Uint8Array) => {
+    audio.push(frameId, data);
+  };
+
+  const clipEnv = webClipboard();
+  const clipboard = clipEnv
+    ? new ClipboardSync((m) => {
+        session.sendClipboard(m);
+      }, clipEnv)
+    : null;
+  const syncGrants = () => {
+    const on = live.granted.includes(PERMISSION.clipboard);
+    if (on && clipboard && !clipboard.getState().enabled) session.openClipboard();
+    clipboard?.setEnabled(on);
+  };
+  syncGrants();
+
   let rttMs = 0;
   const onMessage = (m: Incoming) => {
     if (m.type === 'videoConfig') video.reconfigure();
     else if (m.type === 'pong')
       rttMs = Math.max(0, (session.nowUs() - m.t1Us - (m.t3Us - m.t2Us)) / 1000);
+    else if (m.type === 'sessionAccept' || m.type === 'permissionsUpdate') syncGrants();
+  };
+  const onClipboard = (m: Parameters<ClipboardSync['onMessage']>[0]) => {
+    clipboard?.onMessage(m);
   };
   live.onVideo.add(onVideo);
+  live.onAudio.add(onAudio);
+  live.onClipboard.add(onClipboard);
   live.onMessage.add(onMessage);
   if (live.videoConfig) video.reconfigure();
   opts.onLive?.();
 
-  const stopInput = attachInput(
-    canvas,
-    (m) => {
-      session.sendInput(m);
-    },
-    {
-      displayId: () => live.videoConfig?.displayId ?? 0,
-      videoSize: () => ({ width: canvas.width, height: canvas.height }),
-    },
-  );
+  const sendInput = (m: Parameters<typeof session.sendInput>[0]) => {
+    session.sendInput(m);
+  };
+  const videoSize = () => ({ width: canvas.width, height: canvas.height });
+  const displayId = () => live.videoConfig?.displayId ?? 0;
+  const stopInput = attachInput(canvas, sendInput, {
+    displayId,
+    videoSize,
+    allowPaste: () => clipboard?.getState().enabled === true,
+  });
+  const touch = attachTouch(canvas, sendInput, {
+    displayId,
+    videoSize,
+    viewport: () => canvas.parentElement,
+    ...(opts.touchMode ? { mode: opts.touchMode } : {}),
+  });
+
+  // Autoplay policy: audio can only start from a user gesture.
+  const unlockAudio = () => {
+    void audio.resume();
+  };
+  const onFocus = () => {
+    void clipboard?.onFocus();
+  };
+  const onPaste = (e: ClipboardEvent) => {
+    if (document.activeElement !== canvas) return;
+    const text = e.clipboardData?.getData('text/plain') ?? '';
+    e.preventDefault();
+    clipboard?.onPaste(text);
+  };
+  canvas.addEventListener('pointerdown', unlockAudio);
+  canvas.addEventListener('keydown', unlockAudio);
+  canvas.addEventListener('focus', onFocus);
+  window.addEventListener('focus', onFocus);
+  document.addEventListener('paste', onPaste);
+
+  const controls: SessionControls = { audio, input: touch, clipboard };
+  controlsBySession.set(live.id, controls);
+  setControls(controls);
+  opts.onControls?.(controls);
 
   const feedback = setInterval(() => {
     const r = session.arrivals.takeReport();
@@ -119,9 +206,20 @@ function bind(live: LiveSession, canvas: HTMLCanvasElement, opts: AttachOptions)
     clearInterval(feedback);
     clearInterval(second);
     stopInput();
+    touch.stop();
+    canvas.removeEventListener('pointerdown', unlockAudio);
+    canvas.removeEventListener('keydown', unlockAudio);
+    canvas.removeEventListener('focus', onFocus);
+    window.removeEventListener('focus', onFocus);
+    document.removeEventListener('paste', onPaste);
+    if (controlsBySession.get(live.id) === controls) controlsBySession.delete(live.id);
+    setControls(null);
     live.onVideo.delete(onVideo);
+    live.onAudio.delete(onAudio);
+    live.onClipboard.delete(onClipboard);
     live.onMessage.delete(onMessage);
     video.close();
+    audio.close();
     renderer.dispose();
   };
 }
@@ -134,8 +232,12 @@ export function attachCanvas(
 ): AttachResult {
   let stop: (() => void) | null = null;
   let done = false;
+  let controls: SessionControls | null = null;
   const unwait = whenSession(sessionId, (live) => {
-    if (!done) stop = bind(live, canvas, opts);
+    if (!done)
+      stop = bind(live, canvas, opts, (c) => {
+        controls = c;
+      });
   });
   return {
     detach() {
@@ -143,6 +245,9 @@ export function attachCanvas(
       unwait();
       stop?.();
       stop = null;
+    },
+    get controls() {
+      return controls;
     },
   };
 }

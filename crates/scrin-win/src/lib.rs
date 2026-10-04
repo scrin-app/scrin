@@ -12,6 +12,7 @@ pub mod coords;
 pub mod cursor;
 pub mod hid;
 pub mod resample;
+pub mod sas;
 
 #[cfg(windows)]
 pub mod win;

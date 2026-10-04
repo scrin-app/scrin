@@ -74,6 +74,26 @@ class FormatTest {
         assertEquals(ConnectForm.Problem.TARGET_INVALID, ConnectForm.validate("12345678", "ABCD-EFGH"))
     }
 
+    @Test fun passphraseNeedsFiveWordsInAnyCaseAndSeparator() {
+        assertNull(ConnectForm.validateWords("apple river stone cloud tiger"))
+        assertNull(ConnectForm.validateWords("  Apple-RIVER, stone.cloud   tiger "))
+        assertNull(ConnectForm.validateWords("măr râu piatră nor țară"))
+        assertEquals("Apple RIVER stone cloud tiger", ConnectForm.normalizeWords("  Apple-RIVER, stone.cloud   tiger "))
+        assertEquals(ConnectForm.Problem.WORDS_INVALID, ConnectForm.validateWords(""))
+        assertEquals(ConnectForm.Problem.WORDS_INVALID, ConnectForm.validateWords("apple river stone cloud"))
+        assertEquals(ConnectForm.Problem.WORDS_INVALID, ConnectForm.validateWords("apple river stone cloud tiger moon"))
+        assertEquals(ConnectForm.Problem.WORDS_INVALID, ConnectForm.validateWords("apple river st0ne cloud tiger"))
+        assertEquals(ConnectForm.Problem.WORDS_INVALID, ConnectForm.validateWords("apple river ab cloud tiger"))
+    }
+
+    @Test fun fiveWordsInTheIdFieldNeedNoCode() {
+        assertNull(ConnectForm.validate("apple river stone cloud tiger", ""))
+        assertEquals("apple river stone cloud tiger", ConnectForm.normalizeTarget(" apple  river-stone cloud tiger"))
+        // A 9-digit ID with separators is still an ID, not words.
+        assertEquals("123456789", ConnectForm.normalizeTarget("123 456 789"))
+        assertEquals(ConnectForm.Problem.CODE_INCOMPLETE, ConnectForm.validate("123 456 789", ""))
+    }
+
     @Test fun serverUrlAllowsHttpOnlyOnPrivateNetworks() {
         assertTrue(ServerUrl.valid(""))
         assertEquals("https://scrin.example.org", ServerUrl.parse(" https://scrin.example.org "))

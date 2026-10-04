@@ -69,6 +69,7 @@
     <string name="viewer_stats">%1$s cadre/s · %2$d ms · %3$s Mb/s</string>
     <string name="viewer_path_direct">direct</string>
     <string name="viewer_path_relay">prin releu</string>
+    <string name="viewer_zoom_fit">Încadrează</string>
     <string name="key_esc">Esc</string>
     <string name="key_tab">Tab</string>
     <string name="key_ctrl">Ctrl</string>
@@ -99,6 +100,10 @@
     <string name="host_active_with">Conectat cu %1$s</string>
     <string name="host_stop">Oprește</string>
     <string name="host_stop_report">Oprește și raportează</string>
+
+    <string name="aapm_title">Doar vizualizare: Protecția avansată este activă</string>
+    <string name="aapm_body">Protecția avansată Android oprește serviciile de control de la distanță. Cel care te ajută poate vedea acest ecran, dar nu poate atinge sau scrie. Ca să permiți controlul, dezactivează Protecția avansată din Setări › Securitate și confidențialitate sau continuă doar cu vizualizarea.</string>
+    <string name="aapm_request_note">Protecția avansată este activă, așa că această sesiune poate doar să partajeze ecranul.</string>
 
     <string name="disclosure_title">Controlul de la distanță folosește Accesibilitatea</string>
     <string name="disclosure_what">scrin folosește API-ul de Accesibilitate Android doar într-o sesiune pe care o accepți, pentru a efectua atingerile, glisările, acțiunile Înapoi/Acasă și textul trimise de cel care te ajută.</string>
@@ -203,4 +208,19 @@
     <string name="restricted_step5">Revino la Accesibilitate și pornește scrin control de la distanță.</string>
     <string name="restricted_open_app_info">Deschide Informații aplicație</string>
     <string name="restricted_open_a11y">Deschide setările de Accesibilitate</string>
+    <string name="phrase_title">Cuvinte de conectare</string>
+    <string name="phrase_hint">Cinci cuvinte în loc de ID și cod — mai ușor de spus la telefon.</string>
+    <string name="phrase_show">Arată cuvintele</string>
+    <string name="phrase_hide">Oprește</string>
+    <string name="phrase_new">Cuvinte noi</string>
+    <string name="phrase_copy">Copiază cuvintele</string>
+    <string name="phrase_needs_server">Cuvintele au nevoie de un server scrin. Setează-l în Setări → Rețea.</string>
+    <string name="phrase_once">Ultimele trei cuvinte merg o singură dată; după fiecare folosire apar altele.</string>
+    <string name="phrase_unavailable">Nu am putut obține cuvintele de la serverul scrin. Reîncerc…</string>
+    <string name="phrase_a11y">Cuvinte de conectare: %1$s</string>
+    <string name="connect_with">Conectare cu</string>
+    <string name="connect_mode_code">ID și cod</string>
+    <string name="connect_mode_words">Cuvinte</string>
+    <string name="connect_words_field">Cele cinci cuvinte</string>
+    <string name="error_words_invalid">Scrie toate cele cinci cuvinte, separate prin spațiu</string>
 </resources>

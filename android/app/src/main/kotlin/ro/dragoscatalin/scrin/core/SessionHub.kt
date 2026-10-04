@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import ro.dragoscatalin.scrin.ffi.EndInfo
 import ro.dragoscatalin.scrin.ffi.IncomingRequest
 import ro.dragoscatalin.scrin.ffi.Notice
@@ -22,6 +24,14 @@ import ro.dragoscatalin.scrin.ui.ConnectForm
 
 /** The host's current one-time code and when it lapses (monotonic millis). */
 data class CodeState(val display: String, val expiresAtMs: Long, val totalMs: Long)
+
+/**
+ * The host's five-word passphrase (D24). Words 1–2 locate the host on the server, 3–5 are the
+ * single-use secret. Never log [words]; [toString] is redacted.
+ */
+class PhraseState(val words: List<String>, val expiresAtMs: Long) {
+    override fun toString() = "PhraseState(words=<redacted>, expiresAtMs=$expiresAtMs)"
+}
 
 /** Media/input endpoints owned by Android services; set while they run. */
 interface MediaSinks {
@@ -44,6 +54,8 @@ class SessionHub(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val clock: () -> Long = { android.os.SystemClock.elapsedRealtime() },
+    /** A rendezvous server is configured in the running core (passphrases need one). */
+    val serverConfigured: Boolean = false,
 ) : SessionListener {
     private val _ui = MutableStateFlow(SessionUi())
     val ui: StateFlow<SessionUi> = _ui.asStateFlow()
@@ -57,6 +69,23 @@ class SessionHub(
     /** 9-digit scrin ID once a configured rendezvous server registered this device. */
     private val _scrinId = MutableStateFlow<String?>(null)
     val scrinId: StateFlow<String?> = _scrinId.asStateFlow()
+
+    /** The user turned the passphrase on (host screen); it then follows every code rotation. */
+    private val _phraseOn = MutableStateFlow(false)
+    val phraseOn: StateFlow<Boolean> = _phraseOn.asStateFlow()
+
+    private val _phrase = MutableStateFlow<PhraseState?>(null)
+    val phrase: StateFlow<PhraseState?> = _phrase.asStateFlow()
+
+    /** The last attempt to get words failed (no server reachable, not registered yet…). */
+    private val _phraseFailed = MutableStateFlow(false)
+    val phraseFailed: StateFlow<Boolean> = _phraseFailed.asStateFlow()
+
+    /** Serialises code and passphrase calls: a new code drops the words armed before it. */
+    private val secretLock = Mutex()
+    @Volatile private var phraseLang = "en"
+    @Volatile private var phraseBusy = false
+    @Volatile private var nextPhraseTryMs = 0L
 
     val deviceId: String get() = core.deviceId
     val fingerprint: String get() = core.fingerprint
@@ -75,23 +104,92 @@ class SessionHub(
     /** Fresh code and (re)start of the host loop, so the new code is the one that pairs. */
     fun refreshCode() {
         scope.launch(io) {
-            runCatching {
-                val info = core.newCode()
-                val total = info.expiresInS.toLong() * 1000
-                _code.value = CodeState(info.display, clock() + total, total)
-                if (_ticket.value == null) _ticket.value = core.hostInfo().ticket
-                core.startHost(this@SessionHub)
-            }.onFailure { dispatch(SessionEvent.Error(it.message ?: it.toString())) }
+            secretLock.withLock {
+                // A new code drops the armed words: they must not outlive it on screen.
+                _phrase.value = null
+                val ok = runCatching {
+                    val info = core.newCode()
+                    val total = info.expiresInS.toLong() * 1000
+                    _code.value = CodeState(info.display, clock() + total, total)
+                    if (_ticket.value == null) _ticket.value = core.hostInfo().ticket
+                    core.startHost(this@SessionHub)
+                }.onFailure { dispatch(SessionEvent.Error(it.message ?: it.toString())) }.isSuccess
+                if (ok && _phraseOn.value) armPhraseLocked()
+            }
         }
     }
 
     fun codeExpired(now: Long = clock()): Boolean = _code.value?.let { now >= it.expiresAtMs } ?: true
+
+    /** Turns the passphrase on; `lang` is the UI locale tag (`ro-RO`), the words' language. */
+    fun enablePhrase(lang: String) {
+        if (!serverConfigured) return
+        phraseLang = lang
+        _phraseOn.value = true
+        renewPhrase()
+    }
+
+    /** New words on the current code (the user asked, or the locator is about to lapse). */
+    fun renewPhrase() {
+        if (!_phraseOn.value || phraseBusy) return
+        phraseBusy = true
+        scope.launch(io) {
+            try {
+                secretLock.withLock { if (_phraseOn.value) armPhraseLocked() }
+            } finally {
+                phraseBusy = false
+            }
+        }
+    }
+
+    /**
+     * Turns the passphrase off. A fresh code disarms the words in the core too, so a phrase
+     * already read aloud stops working at once.
+     */
+    fun disablePhrase() {
+        if (!_phraseOn.value) return
+        _phraseOn.value = false
+        _phrase.value = null
+        _phraseFailed.value = false
+        refreshCode()
+    }
+
+    /** Called every second while the words are on screen: renews ~15 s before they lapse, retries failures. */
+    fun phraseTick(now: Long = clock()) {
+        if (!_phraseOn.value || phraseBusy) return
+        val p = _phrase.value
+        val due = if (p != null) now >= p.expiresAtMs - PHRASE_RENEW_EARLY_MS else now >= nextPhraseTryMs
+        if (due) renewPhrase()
+    }
+
+    private fun armPhraseLocked() {
+        runCatching { core.newPassphrase(phraseLang) }
+            .onSuccess { info ->
+                val words = info.words.split(' ').filter { it.isNotEmpty() }
+                _phrase.value = PhraseState(words, clock() + info.expiresInS.toLong() * 1000)
+                _phraseFailed.value = false
+            }
+            .onFailure {
+                // The message may name the cause, never the words; keep it out of the UI error.
+                _phrase.value = null
+                _phraseFailed.value = true
+                nextPhraseTryMs = clock() + PHRASE_RETRY_MS
+            }
+    }
 
     /** Returns the form problem, or `null` when the connect attempt started. */
     fun connect(target: String, code: String): ConnectForm.Problem? {
         ConnectForm.validate(target, code)?.let { return it }
         _ui.update { SessionReducer.controllerStarted(it) }
         call { connect(ConnectForm.normalizeTarget(target), code, this@SessionHub) }
+        return null
+    }
+
+    /** D24 controller side: five dictated words; the core resolves them through the server. */
+    fun connectWords(words: String): ConnectForm.Problem? {
+        ConnectForm.validateWords(words)?.let { return it }
+        _ui.update { SessionReducer.controllerStarted(it) }
+        call { connect(ConnectForm.normalizeWords(words), "", this@SessionHub) }
         return null
     }
 
@@ -102,7 +200,14 @@ class SessionHub(
     fun requestPermission(p: SessionPermission) = call { requestPermission(p) }
     fun end() = call { endSession() }
     fun stopAndReport() = call { stopAndReport() }
-    fun sendVideoConfig(c: VideoConfigInfo) = call { sendVideoConfig(c) }
+
+    /**
+     * Encoder thread, in order with [sendVideoFrame]: after a resize the core must hold the new
+     * SPS/PPS before the first IDR of the new encoder (it prepends them to keyframes).
+     */
+    fun sendVideoConfig(c: VideoConfigInfo) {
+        runCatching { core.sendVideoConfig(c) }.onFailure { dispatch(SessionEvent.Error(it.message ?: it.toString())) }
+    }
 
     /** Hot path: called from the encoder thread, already off main. */
     fun sendVideoFrame(data: ByteArray, keyframe: Boolean) {
@@ -136,7 +241,11 @@ class SessionHub(
     override fun onPermissionAsked(permission: SessionPermission) = dispatch(SessionEvent.Asked(permission))
     override fun onNotice(notice: Notice) = dispatch(SessionEvent.NoticeEv(notice))
     override fun onStats(stats: SessionStats) = dispatch(SessionEvent.Stats(stats))
-    override fun onRegistered(scrinId: String) { _scrinId.value = scrinId }
+    override fun onRegistered(scrinId: String) {
+        _scrinId.value = scrinId
+        // Words asked for before the server knew this host failed: try now.
+        if (_phraseOn.value && _phrase.value == null) renewPhrase()
+    }
     override fun onVideoConfig(config: VideoConfigInfo) {
         dispatch(SessionEvent.Video(config))
         viewerSinks?.onVideoConfig(config)
@@ -147,8 +256,16 @@ class SessionHub(
     override fun onKeyframeRequest() { hostSinks?.onKeyframeRequest() }
     override fun onInput(event: RemoteInput) { hostSinks?.onInput(event) }
     override fun onEnded(end: EndInfo) {
+        val wasHost = _ui.value.role == Role.HOST
         dispatch(SessionEvent.Ended(end))
         hostSinks?.onSessionEnded()
+        // The code and the words are single-use: whatever happened, offer fresh ones.
+        if (wasHost) refreshCode()
     }
     override fun onError(message: String) = dispatch(SessionEvent.Error(message))
+
+    companion object {
+        const val PHRASE_RENEW_EARLY_MS = 15_000L
+        const val PHRASE_RETRY_MS = 10_000L
+    }
 }

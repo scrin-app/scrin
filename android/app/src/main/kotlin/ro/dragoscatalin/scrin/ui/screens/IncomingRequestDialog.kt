@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import ro.dragoscatalin.scrin.R
+import ro.dragoscatalin.scrin.core.AdvancedProtection
 import ro.dragoscatalin.scrin.core.SessionHub
 import ro.dragoscatalin.scrin.ffi.IncomingRequest
 import ro.dragoscatalin.scrin.ffi.SessionPermission
@@ -68,7 +69,9 @@ fun IncomingRequestDialog(hub: SessionHub, req: IncomingRequest) {
         }
     }
     val waitMs = (req.acceptInMs.toLong() - (now - start)).coerceAtLeast(0)
-    val offered = OFFERED.filter { it in req.allowed }
+    // Advanced Protection disables the remote-control service: offer view-only (A-009).
+    val aapm = remember(req) { AdvancedProtection.enabled(ctx) }
+    val offered = OFFERED.filter { it in req.allowed && !(aapm && it == SessionPermission.INPUT) }
     var chosen by remember(req) { mutableStateOf(offered.filter { it in req.requested }.toSet()) }
 
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
@@ -115,6 +118,9 @@ fun IncomingRequestDialog(hub: SessionHub, req: IncomingRequest) {
                 }
                 if (!req.verified) {
                     Text(stringResource(R.string.request_anonymous_caps), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (aapm) {
+                    Text(stringResource(R.string.aapm_request_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },

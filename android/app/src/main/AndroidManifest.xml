@@ -7,11 +7,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- AudioPlaybackCapture during a session (requested at point of use, never at startup). -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Android 16+: read whether Advanced Protection is on (view-only fallback, A-009). -->
+    <uses-permission android:name="android.permission.QUERY_ADVANCED_PROTECTION_MODE" />
+    <!-- RECORD_AUDIO (AudioPlaybackCapture) is added together with the audio stream; see A-004. -->
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
         android:name=".ScrinApp"

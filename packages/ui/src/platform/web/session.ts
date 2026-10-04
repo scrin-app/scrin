@@ -32,6 +32,7 @@ import {
 } from '@scrin/protocol';
 
 import { ArrivalLog } from './feedback';
+import { decodeClipboard, encodeClipboard, type ClipboardMessage } from './clipboard-pb';
 import type { BrowserIdentity } from './identity';
 import type { Duplex, GatewayTransport } from './transport';
 
@@ -47,8 +48,11 @@ export interface WasmApi {
     finish(peer: Uint8Array): WasmPaired;
   };
   Reassembler: new () => {
-    push(d: Uint8Array): { frameId: number; keyframe: boolean; takeData(): Uint8Array } | undefined;
+    push(
+      d: Uint8Array,
+    ): { frameId: number; keyframe: boolean; audio?: boolean; takeData(): Uint8Array } | undefined;
     stats(): Float64Array;
+    audioStats?(): Float64Array;
   };
   attestMessage(
     signerIsHost: boolean,
@@ -92,6 +96,10 @@ interface SessionEvents {
   onMessage(m: Incoming): void;
   /** Reassembled video access unit. */
   onVideo(frameId: number, keyframe: boolean, data: Uint8Array): void;
+  /** Reassembled Opus packet (media kind 1). */
+  onAudio?(frameId: number, data: Uint8Array): void;
+  /** Clipboard envelope from the host (Clipboard or Control stream). */
+  onClipboard?(m: ClipboardMessage): void;
   onClosed(info: { code: number | null; reason: string }): void;
 }
 
@@ -114,6 +122,7 @@ export interface SessionOptions {
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 const CONTROL_LANE = 0;
 const INPUT_LANE = streamLane(false, STREAM_KIND.input, 0);
+const CLIPBOARD_LANE = streamLane(false, STREAM_KIND.clipboard, 0);
 
 function rejection(reason: number): SessionError {
   if (reason === REJECT.wrongCode || reason === REJECT.codeUnavailable)
@@ -131,8 +140,8 @@ function isType<T extends HandshakeMsg['type']>(
 
 export class GatewaySession {
   private control: Duplex | null = null;
-  private input: Duplex | null = null;
-  private inputOpening: Promise<Duplex> | null = null;
+  /** Controller-opened streams by lane (Input, Clipboard), opened on first use. */
+  private readonly streams = new Map<number, Promise<Duplex>>();
   private channel: WasmChannel | null = null;
   private reassembler: InstanceType<WasmApi['Reassembler']> | null = null;
   readonly arrivals = new ArrivalLog();
@@ -279,13 +288,24 @@ export class GatewaySession {
       for (;;) {
         const f = await readFrame(ctl.incoming);
         if (!f) break;
-        const m = decodeEnvelope(ch.open(CONTROL_LANE, f));
-        if (m) this.o.events.onMessage(m);
+        this.dispatch(ch.open(CONTROL_LANE, f));
       }
       this.close(APP_CLOSE.normal);
     } catch {
       this.close(APP_CLOSE.protocol);
     }
+  }
+
+  private dispatch(plain: Uint8Array): void {
+    const m = decodeEnvelope(plain);
+    if (m?.type === 'unknown') {
+      const c = decodeClipboard(plain);
+      if (c) {
+        this.o.events.onClipboard?.(c);
+        return;
+      }
+    }
+    if (m) this.o.events.onMessage(m);
   }
 
   onDatagram(d: Uint8Array): void {
@@ -300,12 +320,13 @@ export class GatewaySession {
       return;
     }
     const h = peekShard(shard);
-    if (h) this.arrivals.record(h, this.nowUs(), d.length);
+    // Bandwidth feedback is about the video stream only.
+    if (h?.kind === 0) this.arrivals.record(h, this.nowUs(), d.length);
     const f = r.push(shard);
-    if (f) {
-      const { frameId, keyframe } = f;
-      this.o.events.onVideo(frameId, keyframe, f.takeData());
-    }
+    if (!f) return;
+    const { frameId, keyframe } = f;
+    if (f.audio === true) this.o.events.onAudio?.(frameId, f.takeData());
+    else this.o.events.onVideo(frameId, keyframe, f.takeData());
   }
 
   /** Sends one envelope on the sealed Control stream. */
@@ -316,26 +337,86 @@ export class GatewaySession {
     void ctl.write(encodeFrame(ch.seal(CONTROL_LANE, encodeEnvelope(m)))).catch(() => undefined);
   }
 
-  /** Sends one input envelope on the sealed Input stream (opened on first use). */
-  sendInput(m: Outgoing): void {
-    const ch = this.channel;
-    if (!ch || this.closed) return;
-    // Seal now so the counter order equals the call order.
-    const frame = encodeFrame(ch.seal(INPUT_LANE, encodeEnvelope(m)));
-    if (this.input) {
-      void this.input.write(frame).catch(() => undefined);
-      return;
-    }
-    this.inputOpening ??= this.o.transport.openBidi().then(async (d) => {
-      await d.write(streamHeader(STREAM_KIND.input, 0));
-      this.input = d;
+  /**
+   * Writes one sealed frame on a controller-opened stream, opening it (header
+   * first) on first use. Sealing happens now so the counter order equals the
+   * call order; writes are chained on the open promise in call order.
+   */
+  private stream(kind: number, lane: number): Promise<Duplex> {
+    let s = this.streams.get(lane);
+    if (s) return s;
+    s = this.o.transport.openBidi().then(async (d) => {
+      await d.write(streamHeader(kind, 0));
+      if (lane === CLIPBOARD_LANE) void this.readClipboard(d);
       return d;
     });
-    void this.inputOpening.then((d) => d.write(frame)).catch(() => undefined);
+    this.streams.set(lane, s);
+    return s;
+  }
+
+  private sendOn(kind: number, lane: number, body: Uint8Array): void {
+    const ch = this.channel;
+    if (!ch || this.closed) return;
+    const frame = encodeFrame(ch.seal(lane, body));
+    const s = this.stream(kind, lane);
+    void s.then((d) => d.write(frame)).catch(() => undefined);
+  }
+
+  /** Sends one input envelope on the sealed Input stream (opened on first use). */
+  sendInput(m: Outgoing): void {
+    this.sendOn(STREAM_KIND.input, INPUT_LANE, encodeEnvelope(m));
+  }
+
+  /**
+   * Sends one clipboard envelope on the sealed Clipboard stream (kind 2,
+   * lane `0x00020000`). The host answers on the same stream.
+   */
+  sendClipboard(m: ClipboardMessage): void {
+    this.sendOn(STREAM_KIND.clipboard, CLIPBOARD_LANE, encodeClipboard(m));
+  }
+
+  /**
+   * Opens the Clipboard stream without sending (header only) so the host
+   * can push offers on it: browsers do not accept host-opened streams in v1.
+   */
+  openClipboard(): void {
+    if (!this.channel || this.closed) return;
+    void this.stream(STREAM_KIND.clipboard, CLIPBOARD_LANE).catch(() => undefined);
+  }
+
+  private async readClipboard(d: Duplex): Promise<void> {
+    const ch = this.channel;
+    if (!ch) return;
+    for (;;) {
+      let f: Uint8Array | null;
+      try {
+        f = await readFrame(d.incoming);
+      } catch {
+        // Reset by a host without clipboard support: not fatal. The lane
+        // stays used (a lane is never reopened); later writes are dropped.
+        return;
+      }
+      if (!f) return;
+      let plain: Uint8Array;
+      try {
+        plain = ch.open(CLIPBOARD_LANE, f);
+      } catch {
+        // A frame that fails to open is fatal (gateway-session.md §4).
+        this.close(APP_CLOSE.protocol);
+        return;
+      }
+      const c = decodeClipboard(plain);
+      if (c) this.o.events.onClipboard?.(c);
+    }
   }
 
   reassemblyStats(): number[] {
     return this.reassembler ? [...this.reassembler.stats()] : [];
+  }
+
+  audioReassemblyStats(): number[] {
+    const s = this.reassembler?.audioStats?.();
+    return s ? [...s] : [];
   }
 
   /** Ends the session politely (SessionEnd, then close). */

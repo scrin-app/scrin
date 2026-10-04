@@ -1,8 +1,27 @@
 {
-  "$comment": "Gzip budgets in bytes for apps/web, enforced by apps/web/scripts/check-size.mjs after `pnpm --filter web build`.",
+  "$comment": "Size budgets in bytes, enforced by scripts/size-budgets.ps1 (gates lane 'size'); web is also checked by apps/web/scripts/check-size.mjs. Budgets = measured + ~10% (2026-10-04); 'provisional' ones have no release artifact measured yet.",
   "web": {
     "initialJsGzip": 153600,
     "initialCssGzip": 25600,
     "largestRouteChunkGzip": 61440
+  },
+  "wasm": {
+    "$measured": "2026-10-04: 237379 raw / 106948 gzip -9",
+    "rawBytes": 261120,
+    "gzipBytes": 117760
+  },
+  "desktop": {
+    "$measured": "2026-10-04: scrin-desktop.exe 15318016; installer provisional (not built)",
+    "exeBytes": 17039360,
+    "installerBytes": 12582912
+  },
+  "server": {
+    "$measured": "2026-10-04: scrin-server.exe 11904000",
+    "binaryBytes": 13107200
+  },
+  "android": {
+    "$measured": "provisional: only debug APKs built (31001586 universal debug); release per-ABI APK/AAB not yet measured",
+    "apkBytes": 31457280,
+    "aabBytes": 41943040
   }
 }

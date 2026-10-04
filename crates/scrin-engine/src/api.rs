@@ -20,7 +20,16 @@ pub type SessionId = String;
 pub enum Command {
     GetStatus,
     RegenerateCode,
-    /// Dial `target` (scrin ID, `scrin:` ticket or 64-hex endpoint id).
+    /// Host: show a five-word passphrase (D24) in `lang` (`"en"`, `"ro"`;
+    /// unknown tags fall back to English). Needs a rendezvous server; the
+    /// words arrive in a later [`Event::Status`]. Calling again re-draws.
+    EnablePhrase {
+        lang: String,
+    },
+    /// Host: stop offering a passphrase and release the locator.
+    DisablePhrase,
+    /// Dial `target` (scrin ID, `scrin:` ticket, 64-hex endpoint id, or a
+    /// five-word passphrase, which carries its own secret and ignores `code`).
     /// An empty `code` asks for unattended (trusted) access.
     Connect {
         target: String,
@@ -126,6 +135,10 @@ pub struct Status {
     /// Epoch ms.
     pub code_issued_at: u64,
     pub code_expires_at: u64,
+    /// Five-word passphrase (D24), space-separated, or empty. Never logged.
+    pub phrase: String,
+    /// Epoch ms; 0 without a passphrase.
+    pub phrase_expires_at: u64,
     pub online: bool,
     pub backend: String,
 }
@@ -137,6 +150,14 @@ impl std::fmt::Debug for Status {
             .field("scrin_id", &self.scrin_id)
             .field("code", &"[redacted]")
             .field("code_expires_at", &self.code_expires_at)
+            .field(
+                "phrase",
+                &if self.phrase.is_empty() {
+                    ""
+                } else {
+                    "[redacted]"
+                },
+            )
             .field("online", &self.online)
             .finish_non_exhaustive()
     }

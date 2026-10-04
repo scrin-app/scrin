@@ -52,3 +52,4 @@ What gets easier, what gets harder, risks, follow-ups.
 | 0009 | [Anti-scam policy for quick connect](0009-anti-scam-policy.md) | Accepted | D19, D05, D14 |
 | 0010 | [UI system — one React UI package, theme engine, i18n](0010-ui-system.md) | Accepted | D12, D20, D10 |
 | 0011 | [Code signing deferred until a legal entity exists](0011-code-signing-deferred.md) | Accepted | D17 |
+| 0012 | [Passphrase quick connect](0012-passphrase-quick-connect.md) | Accepted | D24 |

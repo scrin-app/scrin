@@ -31,6 +31,7 @@ class ScrinApp : Application() {
         // DataStore's first read is tiny and needed before the core binds its relays.
         val saved = runBlocking { settings.settings.first() }
         val relays = RelayUrls.parse(saved.relayUrls).orEmpty()
+        val serverUrl = ServerUrl.parse(saved.serverUrl)
         val core = ScrinCore(
             File(noBackupFilesDir, "core").absolutePath,
             seed,
@@ -38,10 +39,10 @@ class ScrinApp : Application() {
                 deviceName = Build.MODEL ?: "Android",
                 relayUrls = relays,
                 loopbackOnly = false,
-                serverUrl = ServerUrl.parse(saved.serverUrl),
+                serverUrl = serverUrl,
             ),
         )
         if (seed == null) vault.store(core.identitySeed())
-        hub = SessionHub(NativeCore(core), appScope)
+        hub = SessionHub(NativeCore(core), appScope, serverConfigured = serverUrl != null)
     }
 }

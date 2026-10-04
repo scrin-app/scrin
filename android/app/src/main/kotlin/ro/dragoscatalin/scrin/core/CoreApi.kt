@@ -2,6 +2,7 @@ package ro.dragoscatalin.scrin.core
 
 import ro.dragoscatalin.scrin.ffi.CodeInfo
 import ro.dragoscatalin.scrin.ffi.HostInfo
+import ro.dragoscatalin.scrin.ffi.PassphraseInfo
 import ro.dragoscatalin.scrin.ffi.RemoteInput
 import ro.dragoscatalin.scrin.ffi.ScrinCore
 import ro.dragoscatalin.scrin.ffi.SessionListener
@@ -17,6 +18,8 @@ interface CoreApi {
     val deviceId: String
     val fingerprint: String
     fun newCode(): CodeInfo
+    /** D24: five words on the current code slot. Needs a server, a registered host and a code. */
+    fun newPassphrase(lang: String): PassphraseInfo
     fun hostInfo(): HostInfo
     fun startHost(listener: SessionListener)
     fun stopHost()
@@ -41,6 +44,7 @@ class NativeCore(private val core: ScrinCore) : CoreApi {
     override val deviceId: String = core.deviceId()
     override val fingerprint: String = core.fingerprint()
     override fun newCode() = core.newOneTimeCode()
+    override fun newPassphrase(lang: String) = core.newPassphrase(lang)
     override fun hostInfo() = core.hostInfo()
     override fun startHost(listener: SessionListener) = core.startHost(listener)
     override fun stopHost() = core.stopHost()

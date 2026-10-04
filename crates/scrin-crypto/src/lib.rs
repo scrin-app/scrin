@@ -5,6 +5,7 @@
 //! - [`pake`]: SPAKE2 over the already-encrypted QUIC channel, bound to both
 //!   endpoint ids, so a short code can't be attacked offline and the
 //!   rendezvous server can't sit in the middle.
+//! - [`phrase`]: five dictated words (server locator + local PAKE secret).
 //! - [`sas`]: short authentication string (emoji) both users can compare.
 //! - [`trust`]: MAC-sealed list of controllers allowed unattended access.
 
@@ -12,6 +13,7 @@ pub mod channel;
 pub mod code;
 pub mod identity;
 pub mod pake;
+pub mod phrase;
 pub mod sas;
 pub mod trust;
 

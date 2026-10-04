@@ -164,6 +164,31 @@ pub struct AbuseResp {
     pub blocked: bool,
 }
 
+/// `POST /v1/locator` and `POST /v1/locator/release` (D24) — sent by the
+/// HOST. Signed body: empty (labels [`auth::LABEL_LOCATOR`] /
+/// [`auth::LABEL_LOCATOR_RELEASE`] keep the two apart).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocatorReq {
+    pub device_pub: String,
+    pub timestamp: u64,
+    pub signature: String,
+}
+
+/// A passphrase locator (`0..=1_048_575`) bound to the host's id for
+/// `expires_in` seconds. Clients render it as two words; the server never
+/// sees the words' secret part.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocatorResp {
+    pub locator: u32,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocatorReleaseResp {
+    /// `false` when the host held no locator (release is idempotent).
+    pub released: bool,
+}
+
 /// `GET /v1/info` — what a client needs to use this server.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Info {
@@ -201,6 +226,10 @@ pub enum ApiError {
     Blocked,
     #[error("host unreachable")]
     Unreachable,
+    #[error("unknown or expired locator")]
+    UnknownLocator,
+    #[error("no free locator; try again later")]
+    Exhausted,
     #[error("internal error")]
     Internal(#[from] StoreError),
 }
@@ -211,10 +240,11 @@ impl ApiError {
         match self {
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Auth(_) => StatusCode::UNAUTHORIZED,
-            Self::NotRegistered | Self::Offline => StatusCode::NOT_FOUND,
+            Self::NotRegistered | Self::Offline | Self::UnknownLocator => StatusCode::NOT_FOUND,
             Self::RateLimited | Self::LockedOut => StatusCode::TOO_MANY_REQUESTS,
             Self::Blocked => StatusCode::FORBIDDEN,
             Self::Unreachable => StatusCode::BAD_GATEWAY,
+            Self::Exhausted => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -231,6 +261,8 @@ impl ApiError {
             Self::LockedOut => "locked_out",
             Self::Blocked => "blocked",
             Self::Unreachable => "unreachable",
+            Self::UnknownLocator => "unknown_locator",
+            Self::Exhausted => "exhausted",
             Self::Internal(_) => "internal",
         }
     }
@@ -249,7 +281,7 @@ impl IntoResponse for ApiError {
             }),
         )
             .into_response();
-        if matches!(self, Self::RateLimited | Self::LockedOut) {
+        if matches!(self, Self::RateLimited | Self::LockedOut | Self::Exhausted) {
             res.headers_mut()
                 .insert(header::RETRY_AFTER, header::HeaderValue::from_static("60"));
         }
@@ -267,6 +299,8 @@ pub struct Limiters {
     pub resolve_target: RateLimiter<u64>,
     pub resolve_signed_target: RateLimiter<(DeviceId, u64)>,
     pub gateway_ip: RateLimiter<IpAddr>,
+    pub locator_get_ip: RateLimiter<IpAddr>,
+    pub locator_target: RateLimiter<u32>,
 }
 
 impl Default for Limiters {
@@ -280,6 +314,10 @@ impl Default for Limiters {
             resolve_target: RateLimiter::new(Rate::new(10.0, 0.5), LIMITER_KEYS),
             resolve_signed_target: RateLimiter::new(Rate::new(10.0, 0.5), LIMITER_KEYS),
             gateway_ip: RateLimiter::new(Rate::new(10.0, 0.2), LIMITER_KEYS),
+            // Anonymous locator lookups: own buckets so a word-guessing client
+            // can't spend the resolve budget, and vice versa.
+            locator_get_ip: RateLimiter::new(Rate::new(10.0, 0.2), LIMITER_KEYS),
+            locator_target: RateLimiter::new(Rate::new(10.0, 0.2), LIMITER_KEYS),
         }
     }
 }
@@ -293,6 +331,8 @@ pub struct AppState {
     pub limiters: Limiters,
     pub lockout: Lockout,
     pub presence_ttl: u64,
+    /// Lifetime of a passphrase locator in seconds (D24).
+    pub locator_ttl: u64,
     pub abuse_block_threshold: u64,
     pub trust_forwarded: bool,
     pub info: Info,
@@ -307,6 +347,7 @@ impl AppState {
             limiters: Limiters::default(),
             lockout: Lockout::standard(),
             presence_ttl: 60,
+            locator_ttl: 600,
             abuse_block_threshold: 3,
             trust_forwarded: false,
             info: Info::default(),
@@ -334,6 +375,31 @@ impl AppState {
             return Err(ApiError::RateLimited);
         }
         self.presence_of(id)
+    }
+
+    /// Anonymous lookup of a passphrase locator: same rules as an anonymous
+    /// resolve of the device id behind it, plus a per-locator limit.
+    pub fn resolve_locator(&self, ip: IpAddr, locator: u32) -> Result<(u64, Presence), ApiError> {
+        let now = Instant::now();
+        if !self.limiters.locator_get_ip.check(&ip, now) {
+            inc(&self.metrics.rate_limited);
+            return Err(ApiError::RateLimited);
+        }
+        if !self.limiters.locator_target.check(&locator, now) {
+            inc(&self.metrics.rate_limited);
+            return Err(ApiError::RateLimited);
+        }
+        let Some(id) = self.store.locator(locator, auth::now_secs())? else {
+            inc(&self.metrics.locator_misses);
+            return Err(ApiError::UnknownLocator);
+        };
+        if self.lockout.is_locked(id, now) {
+            inc(&self.metrics.locked_out);
+            return Err(ApiError::LockedOut);
+        }
+        let p = self.presence_of(id)?;
+        inc(&self.metrics.locator_lookups);
+        Ok((id, p))
     }
 
     /// Signed lookup by `controller` (already authenticated).
@@ -407,6 +473,17 @@ impl AppState {
             Err(ApiError::RateLimited)
         }
     }
+
+    /// Verifies a host-signed locator request; returns the host's id.
+    fn locator_host(&self, ip: IpAddr, label: &str, req: &LocatorReq) -> Result<u64, ApiError> {
+        self.check_write_rate(ip)?;
+        let key = self.check_sig(label, &req.device_pub, req.timestamp, b"", &req.signature)?;
+        if self.store.is_blocked(&key)? {
+            inc(&self.metrics.blocked_rejections);
+            return Err(ApiError::Blocked);
+        }
+        self.store.id_for_key(&key)?.ok_or(ApiError::NotRegistered)
+    }
 }
 
 /// The TCP peer, inserted as a request extension by the connection loop.
@@ -456,6 +533,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/resolve", post(resolve_post))
         .route("/v1/report-failure", post(report_failure))
         .route("/v1/abuse", post(abuse))
+        .route("/v1/locator", post(locator_allocate))
+        .route("/v1/locator/release", post(locator_release))
+        .route("/v1/locator/{n}", get(locator_get))
         .with_state(state)
 }
 
@@ -655,6 +735,52 @@ async fn abuse(
         state.store.is_blocked(&subject)?
     };
     Ok(Json(AbuseResp { reports, blocked }))
+}
+
+async fn locator_allocate(
+    State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
+    Json(req): Json<LocatorReq>,
+) -> Result<Json<LocatorResp>, ApiError> {
+    let id = state.locator_host(ip, auth::LABEL_LOCATOR, &req)?;
+    let now = auth::now_secs();
+    let locator = match state
+        .store
+        .allocate_locator(id, now, now + state.locator_ttl)
+    {
+        Ok(l) => l,
+        Err(StoreError::LocatorsExhausted) => {
+            tracing::warn!("locator space exhausted");
+            return Err(ApiError::Exhausted);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    inc(&state.metrics.locator_allocations);
+    tracing::debug!(id, locator, "locator allocated");
+    Ok(Json(LocatorResp {
+        locator,
+        expires_in: state.locator_ttl,
+    }))
+}
+
+async fn locator_release(
+    State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
+    Json(req): Json<LocatorReq>,
+) -> Result<Json<LocatorReleaseResp>, ApiError> {
+    let id = state.locator_host(ip, auth::LABEL_LOCATOR_RELEASE, &req)?;
+    let released = state.store.release_locator(id)?;
+    Ok(Json(LocatorReleaseResp { released }))
+}
+
+async fn locator_get(
+    State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
+    Path(n): Path<String>,
+) -> Result<Json<ResolveResp>, ApiError> {
+    let locator = ids::parse_locator(&n).ok_or(ApiError::BadRequest("locator"))?;
+    let (id, p) = state.resolve_locator(ip, locator)?;
+    Ok(Json(resolve_resp(&state, id, &p)?))
 }
 
 async fn ready(State(state): State<Arc<AppState>>) -> Response {

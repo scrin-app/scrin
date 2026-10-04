@@ -90,3 +90,64 @@ describe('web engine connect flow', () => {
     expect((await engine.getCode()).code).toBe('--------');
   });
 });
+
+/** A runtime whose session pairs at once and (optionally) is accepted by the host. */
+function pairing(accept: boolean) {
+  const ended: number[] = [];
+  class FakeSession {
+    constructor(
+      private readonly o: {
+        events: { onMessage(m: unknown): void; onSas(e: number[]): void };
+      },
+    ) {}
+    pair() {
+      this.o.events.onSas([1, 2, 3, 4, 5]);
+      if (accept)
+        this.o.events.onMessage({
+          type: 'sessionAccept',
+          granted: [1, 2, 3],
+          displays: [],
+          maxDurationS: 0,
+        });
+      return Promise.resolve();
+    }
+    end() {
+      ended.push(1);
+    }
+  }
+  const transport = { close: () => undefined };
+  const env = engineWith(
+    {
+      '/v1/info': () => json(200, { gateway: true }),
+      '/v1/resolve/123456789': () => json(429, {}),
+    },
+    {
+      connectWebTransport: () => Promise.resolve(transport as never),
+      GatewaySession: FakeSession as never,
+      wasm: {} as never,
+      identity: {} as never,
+    },
+  );
+  return { ...env, ended };
+}
+
+describe('web engine cancel', () => {
+  it('does not end an accepted session when the connect screen unmounts', async () => {
+    const { engine, events, ended } = pairing(true);
+    const h = await engine.connect('123456789', 'ABCDEFGH');
+    for (let i = 0; i < 8; i += 1) await tick();
+    expect(events).toContainEqual(expect.objectContaining({ type: 'stage', stage: 'connected' }));
+    h.cancel();
+    expect(ended).toEqual([]);
+    await engine.endSession(h.sessionId);
+    expect(ended).toEqual([1]);
+  });
+
+  it('ends a session that is still waiting for the host', async () => {
+    const { engine, ended } = pairing(false);
+    const h = await engine.connect('123456789', 'ABCDEFGH');
+    for (let i = 0; i < 8; i += 1) await tick();
+    h.cancel();
+    expect(ended).toEqual([1]);
+  });
+});

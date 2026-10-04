@@ -66,6 +66,7 @@
     <string name="viewer_stats">%1$s fps · %2$d ms · %3$s Mb/s</string>
     <string name="viewer_path_direct">direct</string>
     <string name="viewer_path_relay">relay</string>
+    <string name="viewer_zoom_fit">Fit</string>
     <string name="key_esc">Esc</string>
     <string name="key_tab">Tab</string>
     <string name="key_ctrl">Ctrl</string>
@@ -96,6 +97,10 @@
     <string name="host_active_with">Connected to %1$s</string>
     <string name="host_stop">Stop</string>
     <string name="host_stop_report">Stop &amp; report</string>
+
+    <string name="aapm_title">View-only: Advanced Protection is on</string>
+    <string name="aapm_body">Android Advanced Protection turns off remote-control services. Your helper can see this screen but can\'t tap or type. To allow control, turn off Advanced Protection in Settings › Security &amp; privacy, or keep sharing view-only.</string>
+    <string name="aapm_request_note">Advanced Protection is on, so this session can only share the screen.</string>
 
     <string name="disclosure_title">Remote control uses Accessibility</string>
     <string name="disclosure_what">scrin uses the Android Accessibility API only during a session you accept, to perform the taps, swipes, Back/Home actions and text entry your helper sends.</string>
@@ -207,4 +212,19 @@
     <string name="restricted_step5">Go back to Accessibility and turn on scrin remote control.</string>
     <string name="restricted_open_app_info">Open App info</string>
     <string name="restricted_open_a11y">Open Accessibility settings</string>
+    <string name="phrase_title">Passphrase</string>
+    <string name="phrase_hint">Five words instead of the ID and code — easier to say over the phone.</string>
+    <string name="phrase_show">Show words</string>
+    <string name="phrase_hide">Turn off</string>
+    <string name="phrase_new">New words</string>
+    <string name="phrase_copy">Copy words</string>
+    <string name="phrase_needs_server">Words need a scrin server. Set one in Settings → Network.</string>
+    <string name="phrase_once">The last three words work once; new ones appear after each use.</string>
+    <string name="phrase_unavailable">Couldn\'t get words from the scrin server. Trying again…</string>
+    <string name="phrase_a11y">Passphrase: %1$s</string>
+    <string name="connect_with">Connect with</string>
+    <string name="connect_mode_code">ID and code</string>
+    <string name="connect_mode_words">Words</string>
+    <string name="connect_words_field">The five words</string>
+    <string name="error_words_invalid">Type all five words, separated by spaces</string>
 </resources>

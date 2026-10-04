@@ -48,6 +48,12 @@ pub(crate) enum Target {
     Addr(EndpointAddr),
     /// 9-digit scrin ID, resolved through the rendezvous server.
     ScrinId(String),
+    /// Five dictated words (D24): locator looked up on the server; the
+    /// secret words are the pairing password (`code` is ignored).
+    Phrase {
+        locator: u32,
+        password: zeroize::Zeroizing<String>,
+    },
 }
 
 /// State shared between the exported object and its background tasks.
@@ -333,6 +339,32 @@ impl ScrinCore {
             .is_some_and(|c| !c.is_consumed())
     }
 
+    /// Arms a five-word passphrase on the current one-time code slot (D24):
+    /// asks the server for a locator, draws three secret words locally.
+    /// Call after [`Self::new_one_time_code`] (a new code drops the words)
+    /// and when `expires_in_s` runs out. Needs a server and a registered
+    /// host (`on_registered`). `lang`: UI locale such as `ro-RO`. Blocking.
+    pub fn new_passphrase(&self, lang: String) -> Result<PassphraseInfo, ScrinError> {
+        let slot = self
+            .shared
+            .host_code()
+            .ok_or_else(|| ScrinError::state("generate a one-time code first"))?;
+        let shared = Arc::clone(&self.shared);
+        let (locator, ttl) = self.block_on(async move {
+            let server = shared
+                .server
+                .as_ref()
+                .ok_or_else(|| ScrinError::input("a passphrase needs a server"))?;
+            Ok(server.allocate_locator(&shared.identity).await?)
+        })?;
+        let phrase = scrin_crypto::phrase::Passphrase::generate(locator)?;
+        slot.set_phrase(phrase.pake_password());
+        Ok(PassphraseInfo {
+            words: phrase.display(scrin_crypto::phrase::Lang::from_locale(&lang)),
+            expires_in_s: u32::try_from(ttl).unwrap_or(u32::MAX),
+        })
+    }
+
     /// Binds the endpoint if needed and returns the connect ticket. Blocking.
     pub fn host_info(&self) -> Result<HostInfo, ScrinError> {
         let shared = Arc::clone(&self.shared);
@@ -390,13 +422,22 @@ impl ScrinCore {
         code: String,
         listener: Arc<dyn SessionListener>,
     ) -> Result<(), ScrinError> {
-        let target = match rendezvous::normalize_scrin_id(&target) {
-            Some(id) if self.shared.server.is_some() => Target::ScrinId(id),
-            Some(_) => return Err(ScrinError::input("a scrin ID needs a server; use a link")),
-            None => Target::Addr(ticket::decode(&target)?),
+        let phrase = scrin_crypto::phrase::parse(&target).ok();
+        let target = match (rendezvous::normalize_scrin_id(&target), phrase) {
+            (Some(id), _) if self.shared.server.is_some() => Target::ScrinId(id),
+            (_, Some(p)) if self.shared.server.is_some() => Target::Phrase {
+                locator: p.locator,
+                password: p.password,
+            },
+            (Some(_), _) | (_, Some(_)) => {
+                return Err(ScrinError::input("a scrin ID or passphrase needs a server"));
+            }
+            (None, None) => Target::Addr(ticket::decode(&target)?),
         };
         // Validate locally so a typo never reaches the host (and never burns its code).
-        code::normalize(&code)?;
+        if !matches!(target, Target::Phrase { .. }) {
+            code::normalize(&code)?;
+        }
         let s = session::Session::controller(listener);
         if !self.shared.set_session(&s) {
             return Err(ScrinError::state("a session is already running"));

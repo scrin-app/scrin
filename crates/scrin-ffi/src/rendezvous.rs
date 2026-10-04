@@ -31,6 +31,7 @@ use crate::types::ScrinError;
 pub(crate) const LABEL_REGISTER: &str = "scrin rendezvous register v1";
 pub(crate) const LABEL_PRESENCE: &str = "scrin rendezvous presence v1";
 pub(crate) const LABEL_RESOLVE: &str = "scrin rendezvous resolve v1";
+pub(crate) const LABEL_LOCATOR: &str = "scrin rendezvous locator v1";
 
 /// Answers larger than this are refused (every answer is < 1 KiB).
 const MAX_BODY: usize = 16 * 1024;
@@ -259,6 +260,7 @@ impl Client {
             .unwrap_or_default();
         Err(match (status, code.as_str()) {
             (404, "not_registered") => ServerError::NotRegistered,
+            (404, "unknown_locator") => ServerError::Other("unknown or expired passphrase".into()),
             (404, _) => ServerError::Offline,
             _ => ServerError::Other(format!("server answered {status} {code}")),
         })
@@ -294,6 +296,36 @@ impl Client {
         Ok((r.id, r.presence_ttl))
     }
 
+    /// `POST /v1/locator` (D24): (locator, seconds until it expires). The
+    /// host must be registered; a new locator replaces the old one.
+    pub(crate) async fn allocate_locator(&self, id: &Identity) -> Result<(u32, u64), ServerError> {
+        #[derive(Serialize)]
+        struct Req {
+            device_pub: String,
+            timestamp: u64,
+            signature: String,
+        }
+        #[derive(Deserialize)]
+        struct Resp {
+            locator: u32,
+            expires_in: u64,
+        }
+        let ts = unix_s();
+        let req = Req {
+            device_pub: id.device_id().to_hex(),
+            timestamp: ts,
+            signature: Self::sign(id, LABEL_LOCATOR, ts, &[]),
+        };
+        let r: Resp = self
+            .send(
+                self.http
+                    .post(format!("{}/v1/locator", self.base))
+                    .json(&req),
+            )
+            .await?;
+        Ok((r.locator, r.expires_in))
+    }
+
     /// `POST /v1/presence`: (scrin ID, seconds until the presence expires).
     pub(crate) async fn presence(
         &self,
@@ -326,14 +358,26 @@ impl Client {
                     .json(&req),
             )
             .await?;
-        let malformed = || ServerError::Other("malformed answer".into());
-        let raw = data_encoding::HEXLOWER_PERMISSIVE
-            .decode(a.device_pub.as_bytes())
-            .map_err(|_| malformed())?;
-        let key: [u8; 32] = raw.try_into().map_err(|_| malformed())?;
-        let key = EndpointId::from_bytes(&key).map_err(|_| malformed())?;
-        Ok(a.addr_hint.endpoint_addr(key))
+        answer_addr(&a)
     }
+
+    /// `GET /v1/locator/{n}` (anonymous): where a passphrase host is (D24).
+    pub(crate) async fn lookup_locator(&self, locator: u32) -> Result<EndpointAddr, ServerError> {
+        let a: ResolveAnswer = self
+            .send(self.http.get(format!("{}/v1/locator/{locator}", self.base)))
+            .await?;
+        answer_addr(&a)
+    }
+}
+
+fn answer_addr(a: &ResolveAnswer) -> Result<EndpointAddr, ServerError> {
+    let malformed = || ServerError::Other("malformed answer".into());
+    let raw = data_encoding::HEXLOWER_PERMISSIVE
+        .decode(a.device_pub.as_bytes())
+        .map_err(|_| malformed())?;
+    let key: [u8; 32] = raw.try_into().map_err(|_| malformed())?;
+    let key = EndpointId::from_bytes(&key).map_err(|_| malformed())?;
+    Ok(a.addr_hint.endpoint_addr(key))
 }
 
 #[cfg(test)]

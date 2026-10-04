@@ -13,6 +13,10 @@
 //! | `POST /v1/presence` | `scrin rendezvous presence v1` | address hint, canonical form |
 //! | `POST /v1/resolve` | `scrin rendezvous resolve v1` | the 9-digit id |
 //! | `POST /v1/report-failure` | `scrin rendezvous report-failure v1` | controller key hex (or empty) |
+//! | `POST /v1/locator` | `scrin rendezvous locator v1` | empty |
+//! | `POST /v1/locator/release` | `scrin rendezvous locator-release v1` | empty |
+//!
+//! `GET /v1/locator/{n}` (anonymous) answers like a resolve.
 //!
 //! The address hint's canonical form is the relay URL (or empty) followed by
 //! one direct address per line, joined with `\n`, in the order sent.
@@ -32,6 +36,8 @@ pub const LABEL_REGISTER: &str = "scrin rendezvous register v1";
 pub const LABEL_PRESENCE: &str = "scrin rendezvous presence v1";
 pub const LABEL_RESOLVE: &str = "scrin rendezvous resolve v1";
 pub const LABEL_REPORT_FAILURE: &str = "scrin rendezvous report-failure v1";
+pub const LABEL_LOCATOR: &str = "scrin rendezvous locator v1";
+pub const LABEL_LOCATOR_RELEASE: &str = "scrin rendezvous locator-release v1";
 
 /// Answers larger than this are refused (every answer is < 1 KiB).
 const MAX_BODY: usize = 16 * 1024;
@@ -172,6 +178,27 @@ pub struct FailureAnswer {
     pub locked: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct SignedEmpty {
+    device_pub: String,
+    timestamp: u64,
+    signature: String,
+}
+
+/// `POST /v1/locator` answer: the passphrase locator and its lifetime.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Locator {
+    pub locator: u32,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct Released {
+    #[serde(default)]
+    #[allow(dead_code)] // part of the contract; callers only need success
+    released: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct ErrorBody {
     #[serde(default)]
@@ -187,6 +214,9 @@ pub enum ServerError {
     /// `404 offline`: the target has no fresh presence.
     #[error("offline or unknown id")]
     Offline,
+    /// `404 unknown_locator`: no host holds this passphrase (typo or expired).
+    #[error("unknown or expired passphrase")]
+    UnknownLocator,
     #[error("rate limited")]
     RateLimited,
     #[error("locked out after failed pairings")]
@@ -304,6 +334,7 @@ impl RendezvousClient {
             .unwrap_or_default();
         Err(match (status, code.as_str()) {
             (404, "not_registered") => ServerError::NotRegistered,
+            (404, "unknown_locator") => ServerError::UnknownLocator,
             (404, _) => ServerError::Offline,
             (429, "locked_out") => ServerError::LockedOut,
             (429, _) => ServerError::RateLimited,
@@ -348,6 +379,51 @@ impl RendezvousClient {
         Ok((a.id, a.expires_in))
     }
 
+    fn signed_empty(&self, label: &str) -> SignedEmpty {
+        let ts = unix_s();
+        SignedEmpty {
+            device_pub: self.identity.device_id().to_hex(),
+            timestamp: ts,
+            signature: self.sign(label, ts, &[]),
+        }
+    }
+
+    /// `POST /v1/locator`: a fresh passphrase locator for this (registered)
+    /// host; replaces any earlier one.
+    pub async fn allocate_locator(&self) -> std::result::Result<Locator, ServerError> {
+        let body = self.signed_empty(LABEL_LOCATOR);
+        self.send(
+            self.http
+                .post(format!("{}/v1/locator", self.base))
+                .json(&body),
+        )
+        .await
+    }
+
+    /// `POST /v1/locator/release`: stop resolving this host's locator.
+    pub async fn release_locator(&self) -> std::result::Result<(), ServerError> {
+        let body = self.signed_empty(LABEL_LOCATOR_RELEASE);
+        let _: Released = self
+            .send(
+                self.http
+                    .post(format!("{}/v1/locator/release", self.base))
+                    .json(&body),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// `GET /v1/locator/{n}` (anonymous).
+    pub async fn lookup_locator(
+        &self,
+        locator: u32,
+    ) -> std::result::Result<EndpointAddr, ServerError> {
+        let a: ResolveAnswer = self
+            .send(self.http.get(format!("{}/v1/locator/{locator}", self.base)))
+            .await?;
+        answer_addr(&a)
+    }
+
     /// `POST /v1/resolve`, signed with this device's key (the controller).
     pub async fn resolve(&self, id: &str) -> std::result::Result<EndpointAddr, ServerError> {
         let ts = unix_s();
@@ -364,12 +440,7 @@ impl RendezvousClient {
                     .json(&req),
             )
             .await?;
-        let raw = data_encoding::HEXLOWER_PERMISSIVE
-            .decode(a.device_pub.as_bytes())
-            .map_err(|_| ServerError::Malformed)?;
-        let key: [u8; 32] = raw.try_into().map_err(|_| ServerError::Malformed)?;
-        let key = EndpointId::from_bytes(&key).map_err(|_| ServerError::Malformed)?;
-        Ok(a.addr_hint.endpoint_addr(key))
+        answer_addr(&a)
     }
 
     /// `POST /v1/report-failure`, sent by the host after a wrong code.
@@ -403,6 +474,23 @@ impl Resolver for RendezvousClient {
                 .map_err(|e| EngineError::Resolve(format!("{scrin_id}: {e}")))
         })
     }
+
+    fn resolve_locator(&self, locator: u32) -> BoxFuture<'_, Result<EndpointAddr>> {
+        Box::pin(async move {
+            self.lookup_locator(locator)
+                .await
+                .map_err(|e| EngineError::Resolve(format!("passphrase: {e}")))
+        })
+    }
+}
+
+fn answer_addr(a: &ResolveAnswer) -> std::result::Result<EndpointAddr, ServerError> {
+    let raw = data_encoding::HEXLOWER_PERMISSIVE
+        .decode(a.device_pub.as_bytes())
+        .map_err(|_| ServerError::Malformed)?;
+    let key: [u8; 32] = raw.try_into().map_err(|_| ServerError::Malformed)?;
+    let key = EndpointId::from_bytes(&key).map_err(|_| ServerError::Malformed)?;
+    Ok(a.addr_hint.endpoint_addr(key))
 }
 
 fn url_scheme(u: &str) -> Option<&str> {

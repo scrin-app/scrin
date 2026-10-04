@@ -8,6 +8,7 @@ import type {
   ConnectStage,
   EngineEvent,
   OneTimeCode,
+  Passphrase,
   ScrinHost,
   SessionEngine,
   SpecialKey,
@@ -24,6 +25,9 @@ export interface DesktopStatus {
   code: string;
   codeIssuedAt: number;
   codeExpiresAt: number;
+  /** Five-word passphrase or `''` (D24). */
+  phrase: string;
+  phraseExpiresAt: number;
   online: boolean;
   backend: string;
 }
@@ -106,8 +110,12 @@ function isStatus(v: unknown): v is DesktopStatus {
   );
 }
 
-async function invokeStatus(bridge: TauriBridge, cmd: string): Promise<DesktopStatus> {
-  const v = await bridge.invoke(cmd);
+async function invokeStatus(
+  bridge: TauriBridge,
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<DesktopStatus> {
+  const v = await bridge.invoke(cmd, args);
   if (!isStatus(v)) throw new Error(`${cmd}: unexpected reply`);
   return v;
 }
@@ -145,6 +153,13 @@ const FAILED_REASONS = new Set(['pairing-failed', 'connect-failed', 'timeout']);
 function toCode(s: DesktopStatus): OneTimeCode {
   return { code: s.code.replace('-', ''), issuedAt: s.codeIssuedAt, expiresAt: s.codeExpiresAt };
 }
+
+function toPhrase(s: DesktopStatus): Passphrase | null {
+  return s.phrase ? { words: s.phrase, expiresAt: s.phraseExpiresAt } : null;
+}
+
+/** How long `setPassphrase` waits for the server to allocate a locator. */
+const PHRASE_WAIT_MS = 10_000;
 
 /**
  * Maps native events onto the UI's `EngineEvent` contract. Controller
@@ -200,6 +215,8 @@ function createDesktopEngine(bridge: TauriBridge, opts: DesktopHostOptions): Ses
   const emit = (e: EngineEvent) => {
     for (const l of listeners) l(e);
   };
+  /** Resolvers waiting for the first status that carries a phrase. */
+  const phraseWaiters = new Set<(p: Passphrase) => void>();
 
   void bridge.listen('scrin://event', (native) => {
     if (!isNativeEvent(native)) return;
@@ -208,6 +225,13 @@ function createDesktopEngine(bridge: TauriBridge, opts: DesktopHostOptions): Ses
       native.type === 'permissionRequested' ||
       native.type === 'status'
     ) {
+      if (native.type === 'status') {
+        const p = toPhrase(native);
+        if (p) {
+          for (const w of phraseWaiters) w(p);
+          phraseWaiters.clear();
+        }
+      }
       opts.onHostEvent?.(native);
       return;
     }
@@ -245,6 +269,31 @@ function createDesktopEngine(bridge: TauriBridge, opts: DesktopHostOptions): Ses
     async regenerateCode() {
       return toCode(await invokeStatus(bridge, 'scrin_regenerate_code'));
     },
+    async setPassphrase(lang: string | null) {
+      if (lang === null) {
+        await bridge.invoke('scrin_disable_phrase');
+        return null;
+      }
+      // Enabling always asks the server for a new locator: wait for the
+      // status that carries the new words.
+      const arrived = new Promise<Passphrase | null>((resolve) => {
+        const done = (p: Passphrase) => {
+          clearTimeout(timer);
+          resolve(p);
+        };
+        const timer = setTimeout(() => {
+          phraseWaiters.delete(done);
+          resolve(null);
+        }, PHRASE_WAIT_MS);
+        phraseWaiters.add(done);
+      });
+      await invokeStatus(bridge, 'scrin_enable_phrase', { lang });
+      return arrived;
+    },
+    async getPassphrase() {
+      return toPhrase(await status());
+    },
+    supportsPassphrase: true,
     async connect(id: string, code: string): Promise<ConnectHandle> {
       const sessionId = await invokeSession(bridge, { target: id, code });
       return {

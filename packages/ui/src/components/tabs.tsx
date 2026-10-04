@@ -7,7 +7,15 @@ export function Tabs(props: ComponentProps<typeof BaseTabs.Root>) {
   return <BaseTabs.Root {...props} />;
 }
 
-export function TabsList({ className, children, ...rest }: ComponentProps<typeof BaseTabs.List>) {
+export function TabsList({
+  className,
+  children,
+  indicator = true,
+  ...rest
+}: ComponentProps<typeof BaseTabs.List> & {
+  /** The sliding pill; off for sidebar layouts that style `data-active` themselves. */
+  indicator?: boolean;
+}) {
   return (
     <BaseTabs.List
       className={cx(
@@ -17,13 +25,15 @@ export function TabsList({ className, children, ...rest }: ComponentProps<typeof
       {...rest}
     >
       {children}
-      <BaseTabs.Indicator
-        className={cn(
-          'absolute top-1/2 left-0 -z-0 h-(--active-tab-height) w-(--active-tab-width) -translate-y-1/2',
-          'translate-x-(--active-tab-left) rounded-md bg-surface shadow-sm',
-          'transition-[translate,width] duration-(--scrin-dur) ease-scrin',
-        )}
-      />
+      {indicator ? (
+        <BaseTabs.Indicator
+          className={cn(
+            'absolute top-1/2 left-0 -z-0 h-(--active-tab-height) w-(--active-tab-width) -translate-y-1/2',
+            'translate-x-(--active-tab-left) rounded-md bg-surface shadow-sm',
+            'transition-[translate,width] duration-(--scrin-dur) ease-scrin',
+          )}
+        />
+      ) : null}
     </BaseTabs.List>
   );
 }

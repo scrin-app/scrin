@@ -107,6 +107,16 @@ pub fn failure_body(host: &Identity) -> Value {
     })
 }
 
+/// Body of `POST /v1/locator` / `POST /v1/locator/release` (signed body empty).
+pub fn locator_body(host: &Identity, label: &str) -> Value {
+    let ts = auth::now_secs();
+    json!({
+        "device_pub": host.device_id().to_hex(),
+        "timestamp": ts,
+        "signature": signed(host, label, ts, b""),
+    })
+}
+
 pub fn abuse_body(reporter: &Identity, subject_pub: &str, reason: &str) -> Value {
     let ts = auth::now_secs();
     let body = format!("{subject_pub}\n\n{reason}");

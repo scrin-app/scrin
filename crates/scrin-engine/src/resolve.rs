@@ -6,6 +6,8 @@
 //! - a **ticket** `scrin:<64 hex endpoint id>[?a=<ip:port>][&r=<relay url>]…`
 //!   (what [`encode_ticket`] prints; works with no server at all);
 //! - a bare **64-hex endpoint id** (dialable only through relays/address lookup).
+//! - a dictated **passphrase** of five words ([`scrin_crypto::phrase`]): the
+//!   first two are a server locator, the rest the pairing secret.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -15,7 +17,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
+use scrin_crypto::phrase;
 use serde::Deserialize;
+use zeroize::Zeroizing;
 
 use crate::{EngineError, Result};
 
@@ -24,6 +28,16 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// Looks up the current address of a scrin ID.
 pub trait Resolver: Send + Sync + std::fmt::Debug + 'static {
     fn resolve<'a>(&'a self, scrin_id: &'a str) -> BoxFuture<'a, Result<EndpointAddr>>;
+
+    /// Looks up a passphrase locator (`GET /v1/locator/{n}`). Resolvers
+    /// without a rendezvous server cannot.
+    fn resolve_locator(&self, locator: u32) -> BoxFuture<'_, Result<EndpointAddr>> {
+        Box::pin(async move {
+            Err(EngineError::Resolve(format!(
+                "passphrase {locator}: no server configured"
+            )))
+        })
+    }
 }
 
 /// In-memory map; tests and LAN demos.
@@ -153,10 +167,28 @@ impl Resolver for HttpResolver {
 }
 
 /// What a connect string refers to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ConnectTarget {
     ScrinId(String),
     Addr(EndpointAddr),
+    /// Five dictated words: where to dial and the pairing secret.
+    Phrase {
+        locator: u32,
+        password: Zeroizing<String>,
+    },
+}
+
+impl std::fmt::Debug for ConnectTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ScrinId(id) => f.debug_tuple("ScrinId").field(id).finish(),
+            Self::Addr(a) => f.debug_tuple("Addr").field(a).finish(),
+            Self::Phrase { locator, .. } => f
+                .debug_struct("Phrase")
+                .field("locator", locator)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 /// The 9 digits of a scrin ID, or `None`.
@@ -181,7 +213,15 @@ pub fn parse_target(input: &str) -> Result<ConnectTarget> {
         let id = parse_endpoint_id(t)?;
         return Ok(ConnectTarget::Addr(EndpointAddr::from_parts(id, [])));
     }
-    Err(EngineError::InvalidTarget("expected a scrin ID or ticket"))
+    if let Ok(p) = phrase::parse(t) {
+        return Ok(ConnectTarget::Phrase {
+            locator: p.locator,
+            password: p.password,
+        });
+    }
+    Err(EngineError::InvalidTarget(
+        "expected a scrin ID, ticket or five-word passphrase",
+    ))
 }
 
 fn parse_endpoint_id(s: &str) -> Result<EndpointId> {

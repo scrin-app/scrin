@@ -9,9 +9,9 @@ F-007,Foundation,lefthook pre-commit + commit-msg + pre-push,task,P0,done,VERIFI
 F-008,Foundation,check-invariants.ps1 + test-invariants.ps1 (mutation-tested),task,P0,done,VERIFIED: check-invariants INV-01..14 PASS; test-invariants 25 mutations caught
 F-009,Foundation,CI: ci.yml path-filtered + single required gate job; actions pinned by SHA,task,P0,doing,ci.yml written (SHA-pinned); not yet run on GitHub (no remote/org)
 F-010,Foundation,cargo-deny (AGPL-compatible licence allowlist) + gitleaks + pnpm audit,task,P0,done,VERIFIED: cargo deny check licenses bans sources ok; pnpm audit no vulns; gitleaks dir no leaks
-F-011,Foundation,Size budgets (web chunk gzip; desktop installer; APK),task,P1,done,VERIFIED: apps/web size check initial JS 141.1 KB gzip <= 150 KB
-F-012,Foundation,GitHub org (dedicated) + public repo + branch protection,task,P1,todo,needs user to create org
-P-001,Protocol,proto/scrin/v1 (envelope; hello/caps; session; input; clipboard; files; chat; control) + buf lint/breaking,story,P0,done,VERIFIED: proto/scrin/v1 7 files; scrin-proto 13 tests pass (buf lint pending: buf not installed)
+F-011,Foundation,Size budgets (web chunk gzip; desktop installer; APK),task,P1,done,VERIFIED 2026-10-04: pwsh scripts/gates.ps1 -Only proto+size -> size PASS (scripts/size-budgets.ps1: web initial JS 142.1 KB gz/150; wasm 237379 raw/106948 gz; desktop exe 15318016; scrin-server 11904000; SKIP installer + Android release APK/AAB not built); over-budget mutant exits 1
+F-012,Foundation,GitHub org (dedicated) + public repo + branch protection,task,P1,doing,"VERIFIED 2026-10-04: org github.com/scrin-app created, public repo scrin-app/scrin, main pushed (46dba78), secrets TAURI_SIGNING_PRIVATE_KEY(+_PASSWORD) set; branch protection not yet configured"
+P-001,Protocol,proto/scrin/v1 (envelope; hello/caps; session; input; clipboard; files; chat; control) + buf lint/breaking,story,P0,done,VERIFIED 2026-10-04: proto/scrin/v1 7 files; scrin-proto 13 tests pass; buf 1.73.0 lint + format -d --exit-code + breaking vs origin/main exit 0 (gates proto lane PASS); renumber mutant flagged by buf breaking
 P-002,Protocol,Hand-packed 16-byte media header + shard header (frame id; shard idx; fec),story,P0,done,VERIFIED: scrin-proto media::MediaHeader 16 B + scrin-media fec::ShardHeader; tests pass
 P-003,Protocol,Version + capability negotiation inside encrypted channel; prologue bound to transcript,story,P0,todo,
 P-004,Protocol,Cross-language test vectors (Rust; TS; Kotlin),story,P1,todo,
@@ -44,7 +44,7 @@ W-003,Windows host,openh264 software fallback,story,P0,done,VERIFIED 2026-10-04:
 W-004,Windows host,SendInput scancode + unicode + relative mouse,story,P0,done,VERIFIED 2026-10-04: SendInputInjector HID->scancode table tests + unicode + abs/rel mouse
 W-005,Windows host,WASAPI loopback (process-exclude) -> Opus,story,P0,doing,WASAPI loopback + Opus works (tests); process-excluding loopback pending
 W-006,Windows host,Clipboard text/html/image sync with echo suppression,story,P0,doing,clipboard text+image + echo suppression tests; PNG<->DIB conversion pending
-W-007,Windows host,SYSTEM service + per-session agent; UAC secure desktop; login screen; SendSAS,story,P0,todo,
+W-007,Windows host,SYSTEM service + per-session agent; UAC secure desktop; login screen; SendSAS,story,P0,doing,"VERIFIED 2026-10-04 build+tests: crates/scrin-service (supervisor 7 + ipc 3 tests, clippy -D warnings, --help), scrin-win desktop follow (2 tests) + SAS chord detector (3 tests), engine routes Ctrl+Alt+Del to service pipe. EXPECTED: elevated install + lock-screen/UAC/SAS manual steps in crates/scrin-service/README.md not yet run (needs admin)"
 W-008,Windows host,Virtual display (VDD IddCx) per client: resolution/refresh/HDR match,story,P1,todo,
 W-009,Windows host,Privacy mode (virtual display + physical blank) with on-screen banner,story,P1,todo,
 W-010,Windows host,Gamepad via ViGEmBus 1.22 (optional component),story,P1,todo,
@@ -61,7 +61,7 @@ D-003,Desktop UI,Session toolbar (morphing): quality; displays; keys; files; cha
 D-004,Desktop UI,Address book + devices + groups + tags + search (virtualized),story,P1,todo,
 D-005,Desktop UI,Settings: general; security; network; video; audio; input; theme; language; updates; about,story,P0,todo,
 D-006,Desktop UI,Tray; autostart; single instance; deep links scrin://; window state,story,P0,doing,tray/single-instance/deep-link/autostart configured; not exercised on device
-D-007,Desktop UI,Auto-updater (minisign manifest),story,P1,doing,Plugin + endpoint configured; pubkey is REPLACE_WITH_MINISIGN_PUBLIC_KEY until the release key is generated (apps/desktop/README.md)
+D-007,Desktop UI,Auto-updater (minisign manifest),story,P1,doing,"minisign key generated outside repo (~/.scrin), pubkey in tauri.conf.json, private key + password set as GitHub secrets 2026-10-04; release manifest not yet published (needs first release build)"
 D-008,Desktop UI,NSIS installer (per-user + per-machine with service) + portable mode,story,P0,doing,tauri.conf.json NSIS currentUser EN+RO + MSI configured; no bundle built yet (debug exe only)
 D-009,Desktop UI,scrin-engine actor: host + controller roles; DPAPI identity; trust; code rotation; pairing; media + BWE; input,story,P0,done,VERIFIED 2026-10-04: cargo test -p scrin-engine 16 passed (loopback: 30 frames in 973 ms; first frame 15 ms after accept; SAS equal; input injected; wrong code refused); clippy -D warnings clean incl. --features win
 D-010,Desktop UI,Tauri shell runs the shared SPA (VITE_SCRIN_HOST=desktop) with strict CSP,story,P0,done,VERIFIED 2026-10-04: target/debug/scrin-desktop.exe (custom-protocol) renders Home; screenshot .copilot-tmp/desktop-home.png; OCR shows YOUR ID + ONE-TIME CODE + Connect
@@ -73,19 +73,19 @@ U-005,UI system,Responsive 360px -> 32:9 ultrawide; container queries; Playwrigh
 U-006,UI system,a11y WCAG 2.2 AA: keyboard; focus; labels; axe gate,story,P0,todo,
 U-007,UI system,ScrinHost platform interface (WebHost; DesktopHost),story,P0,done,VERIFIED 2026-10-04: packages/ui/src/platform/desktop.ts + desktop.test.ts (vitest 178 passed); desktop exe Home screen shows the engine's ID and code
 WB-001,Web client,SPA shell (TanStack Router) + PWA manifest,story,P0,todo,
-WB-002,Web client,WebTransport client + WASM handshake (scrin-wasm),story,P0,doing,"VERIFIED 2026-10-04: crates/scrin-wasm (wasm 237 KB raw/107 KB gzip) + packages/ui/src/platform/web (WT + WS fallback, Identify/SPAKE2/Attest, inner channel); contract docs/protocol/gateway-session.md; vectors testvectors/gateway-session.json replayed by cargo test -p scrin-wasm --test vectors and vitest (326 passed). EXPECTED: live run vs a real host needs the engine scrin-gw/1 handler green (gw.rs clippy) + browser e2e"
-WB-003,Web client,WebCodecs VideoDecoder -> WebGPU/WebGL2 canvas; AudioDecoder -> AudioWorklet,story,P0,doing,"VERIFIED 2026-10-04 (unit): FEC reassembly in wasm, avc1 codec string from SPS, VideoDecoder pipeline with keyframe requests, WebGL2/2D renderer, BitrateFeedback + Ping + stats; audio not started"
-WB-004,Web client,Keyboard/mouse/touch capture; pointer lock; fullscreen; clipboard on focus,story,P0,doing,"VERIFIED 2026-10-04 (unit): KeyboardEvent.code->HID table, letterbox-aware absolute pointer, pointer-lock relative, wheel 120/notch, special keys; touch + clipboard not started"
+WB-002,Web client,WebTransport client + WASM handshake (scrin-wasm),story,P0,done,"VERIFIED 2026-10-04: apps/web/e2e/live/run-live.ps1 real scrin-server + real Windows host (NVIDIA H.264) + headless Chrome: LIVE transport=webtransport PASS and transport=websocket PASS (SAS shown, canvas >4 colours, Scroll Lock injected); engine.ts cancel() regression fixed + 2 tests"
+WB-003,Web client,WebCodecs VideoDecoder -> WebGPU/WebGL2 canvas; AudioDecoder -> AudioWorklet,story,P0,doing,"VERIFIED 2026-10-04 (unit): WebCodecs video live; Opus AudioDecoder + AudioWorklet jitter buffer 40-60 ms adaptive (audio.test, jitter-worklet.test). EXPECTED live audio: host engine sends no audio yet (scrin-engine media.rs only Video FEC)"
+WB-004,Web client,Keyboard/mouse/touch capture; pointer lock; fullscreen; clipboard on focus,story,P0,done,"VERIFIED 2026-10-04: keyboard live (Scroll Lock e2e); touch direct+trackpad, two-finger right-click/scroll, pinch local zoom (gestures.test, touch.test); clipboard text policy (clipboard.test, byte-exact pb). Host clipboard stream handling = W-006"
 WB-005,Web client,File upload/download through streams,story,P1,todo,
 A-001,Android,Gradle project (AGP 9.4; Kotlin 2.4.20; Compose BOM 2026.09; navigation3; gms/foss flavours),story,P0,done,VERIFIED 2026-10-04: gradle :app gms/foss + :tv + :core-ffi BUILD SUCCESSFUL; lint 0; checkFossNoGms pass
 A-002,Android,core-ffi: cargo-ndk + UniFFI library mode + JNA host tests,story,P0,done,VERIFIED 2026-10-04: scrin-ffi UniFFI 0.32 library mode + cargo-ndk; core-ffi JNA tests 6 pass; android clippy pass
-A-003,Android,Client: MediaCodec low-latency decode -> SurfaceView; touch modes (trackpad/direct); keyboard,story,P0,todo,
-A-004,Android,Host attended: MediaProjection FGS + MediaCodec encode + AudioPlaybackCapture,story,P0,todo,
-A-005,Android,Host input: AccessibilityService (gestures; global actions; text) + prominent disclosure; restricted-settings guide,story,P0,todo,
+A-003,Android,Client: MediaCodec low-latency decode -> SurfaceView; touch modes (trackpad/direct); keyboard,story,P0,done,"VERIFIED 2026-10-04 A51: PC win_host -> A51 controller, OMX.Exynos.avc.dec low-latency 30 fps, cursor moves direct+trackpad, text+Esc, pinch/fit; .copilot-tmp/device/a003-*.png"
+A-004,Android,Host attended: MediaProjection FGS + MediaCodec encode + AudioPlaybackCapture,story,P0,doing,"VERIFIED 2026-10-04 video: consent + mediaProjection FGS, PC decodes 864x1920, rotation -> new encoder + IDR; Exynos KEY_LOW_LATENCY fallback fixed. Audio missing in scrin-ffi core"
+A-005,Android,Host input: AccessibilityService (gestures; global actions; text) + prominent disclosure; restricted-settings guide,story,P0,done,"VERIFIED 2026-10-04 A51: disclosure -> a11y settings, restricted-settings guide (RO), tap/swipe/Home/Back/Recents, remote text ""hello""; stale SET_TEXT bug fixed; INV-14 holds"
 A-006,Android,Material 3 theme from shared tokens; RO+EN strings; dynamic color option,story,P0,done,VERIFIED 2026-10-04: lagoon brand theme light/dark on A51 screenshots .copilot-tmp/a51-home(-dark).png; RO strings
 A-007,Android,Device Owner / MDM mode for unattended (optional),story,P2,todo,
 A-008,Android,Android TV client (D-pad; gamepad),story,P2,todo,
-A-009,Android,Advanced Protection detection -> view-only fallback,story,P1,todo,
+A-009,Android,Advanced Protection detection -> view-only fallback,story,P1,doing,EXPECTED 2026-10-04: AdvancedProtectionManager behind SDK_INT 36 check; view-only card + request filtering verified only in simulated mode on A51 (SDK 33)
 API-001,Accounts API,Hono + zod-openapi + Drizzle + PG17 skeleton; /health; pino,story,P0,done,VERIFIED 2026-10-04: apps/api Hono+zod-openapi; /health /ready /openapi.json (3.1; 23 paths) /docs curl 200
 API-002,Accounts API,better-auth: email + passkey + TOTP; org OIDC,story,P0,done,VERIFIED 2026-10-04: better-auth email+passkey+TOTP+organization mounted; sign-up 200; tests
 API-003,Accounts API,Orgs; roles; members; devices; groups; address book; policies,story,P0,done,VERIFIED 2026-10-04: devices (Ed25519 challenge) groups address book policies; org isolation tests (404)
@@ -107,3 +107,4 @@ X-010,Features,Anti-scam: sensitive-app blur; Stop & report; anonymous caps,stor
 B-001,Brand,Brand pack: logo; palette; icons; favicons; app icons (Brand Designer flow),story,P1,done,VERIFIED 2026-10-04: brand/ pack: Split S concept; 65 contrast pairs 0 AA failures; legibility 16/24/32 PASS; RO glyphs; motion
 DOC-001,Docs,apps/site Astro Starlight: install; self-host; security model; FAQ (EN+RO),story,P1,todo,
 DOC-002,Docs,ADRs for every architectural decision,task,P0,done,VERIFIED 2026-10-04: docs/adr 0001-0011 + README index
+C-008,Crypto,Passphrase quick connect (D24): 2 locator words (server) + 3 secret words (SPAKE2); EN+RO lists; diacritic-free input,story,P1,doing,VERIFIED 2026-10-04: scrin-crypto phrase (9 tests) + wordlists check.ps1 PASS; server /v1/locator (7 api + store tests); net loopback dictated_phrase + wrong_phrase; engine tests/server.rs dictated_passphrase_connects_and_is_single_use PASS; desktop host setPassphrase (3 vitest). UI screens + Android pending

@@ -7,9 +7,9 @@
   loud SKIP, never a silent pass):
     rust       cargo fmt --check, clippy -D warnings, cargo test, cargo deny
     js         pnpm typecheck / lint / test (only scripts the root package.json defines)
-    proto      buf lint + buf breaking against main (needs `buf` on PATH)
+    proto      buf lint, buf format -d --exit-code, buf breaking against origin/main (else main) (needs `buf`)
     android    gradlew lint + unit tests (needs android/gradlew)
-    size       scripts/size-budgets.ps1 (when it exists)
+    size       scripts/size-budgets.ps1 (measures built artifacts vs size-budget.json; unbuilt = SKIP row)
     e2e        pnpm e2e (opt-in: not part of the default set; run -Only e2e)
     invariants check-invariants.ps1, test-invariants.ps1 (mutation), check-tracker.ps1
     security   gitleaks over git history, pnpm audit --audit-level high
@@ -78,14 +78,24 @@ elseif (-not (Has 'pnpm')) { @{ Skip = 'pnpm not on PATH' } }
 else { @{ Steps = @((PnpmScript 'typecheck'), (PnpmScript 'lint'), (PnpmScript 'test')) } }
 
 $protoFiles = @(if (Test-Path 'proto') { rg --files proto -g '*.proto' })
+# buf's GitHub-release fallback install lands in $HOME/bin; a fresh session may not have it on PATH yet.
+$homeBin = Join-Path $HOME 'bin'
+if (-not (Has 'buf') -and (Test-Path (Join-Path $homeBin 'buf*'))) { $env:PATH = "$env:PATH$([IO.Path]::PathSeparator)$homeBin" }
 $plan.proto = if (-not $protoFiles) { @{ Skip = 'no proto/**/*.proto' } }
 elseif (-not (Has 'buf')) { @{ Skip = 'buf NOT INSTALLED - proto not checked (winget install bufbuild.buf)' } }
 else {
-  git rev-parse --verify -q 'main:proto' 2>$null | Out-Null
-  $hasBase = $LASTEXITCODE -eq 0
+  # Compare against the published main when we have it, else the local main branch.
+  $against = ''
+  git rev-parse --verify -q 'refs/remotes/origin/main:proto' 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) { $against = '.git#ref=refs/remotes/origin/main' }
+  else {
+    git rev-parse --verify -q 'main:proto' 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $against = '.git#branch=main' }
+  }
   @{ Steps = @(
       Step 'buf lint' 'buf lint'
-      Step 'buf breaking' "buf breaking --against '.git#branch=main'" '.' $(if ($hasBase) { '' } else { 'main has no proto/ yet (nothing to compare)' })
+      Step 'buf format' 'buf format -d --exit-code'
+      Step 'buf breaking' "buf breaking --against '$against'" '.' $(if ($against) { '' } else { 'main has no proto/ yet (nothing to compare)' })
     ) }
 }
 

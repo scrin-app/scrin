@@ -2,11 +2,24 @@
 //! view and drive an Android host.
 //!
 //! Connects by ticket + code, decodes the H.264 access units with openh264, saves the first
-//! decoded picture as a PNG and optionally sends one gesture once the picture is in.
+//! decoded picture as a PNG and optionally sends one gesture once the picture is in, or runs a
+//! `--script` of steps (one per line, `#` comments) alongside decoding:
+//!
+//! ```text
+//! wait 1500                 # ms
+//! tap 0.5 0.5               # touch down/up (normalised host coordinates)
+//! swipe 0.5 0.8 0.5 0.3     # touch drag
+//! click 0.5 0.5             # mouse move + left click
+//! key 0x4A                  # HID usage down/up (0x4A Home, 0x29 Esc, 0x65 Recents)
+//! text hello                # Text input
+//! wheel -120                # mouse wheel at the last mouse position
+//! shot .copilot-tmp\x.png   # save the next decoded picture
+//! ```
 //!
 //! ```powershell
 //! cargo run -p scrin-ffi --example win_controller -- --ticket <scrin:…> --code ABCD-EFGH `
-//!     --png .copilot-tmp\a51-host-frame.png [--swipe 0.5,0.85,0.5,0.25] [--tap 0.5,0.5] [--seconds 20]
+//!     --png .copilot-tmp\a51-host-frame.png [--swipe 0.5,0.85,0.5,0.25] [--tap 0.5,0.5] `
+//!     [--script steps.txt] [--seconds 20]
 //! ```
 
 #[cfg(windows)]
@@ -19,8 +32,8 @@ mod run {
     use std::time::{Duration, Instant};
 
     use scrin_ffi::{
-        CoreConfig, EndInfo, IncomingRequest, Notice, RemoteInput, SasInfo, ScrinCore,
-        SessionListener, SessionPermission, SessionState, SessionStats, TouchPhase,
+        CoreConfig, EndInfo, IncomingRequest, MouseButtonKind, Notice, RemoteInput, SasInfo,
+        ScrinCore, SessionListener, SessionPermission, SessionState, SessionStats, TouchPhase,
         VideoConfigInfo,
     };
     use scrin_win::VideoDecoder as _;
@@ -92,6 +105,7 @@ mod run {
         png: String,
         tap: Option<(f32, f32)>,
         swipe: Option<[f32; 4]>,
+        script: Option<String>,
         seconds: u64,
     }
 
@@ -113,6 +127,7 @@ mod run {
                 "--code" => a.code = v,
                 "--png" => a.png = v,
                 "--seconds" => a.seconds = v.parse()?,
+                "--script" => a.script = Some(v),
                 "--tap" => {
                     if let [x, y] = floats(&v)[..] {
                         a.tap = Some((x, y));
@@ -142,6 +157,87 @@ mod run {
         enc.set_color(png::ColorType::Rgba);
         enc.set_depth(png::BitDepth::Eight);
         enc.write_header()?.write_image_data(&rgba)?;
+        Ok(())
+    }
+
+    /// Pending `shot` request: the main loop saves the next decoded picture there.
+    type ShotSlot = Arc<Mutex<Option<String>>>;
+
+    fn hid(s: &str) -> AnyResult<u32> {
+        Ok(match s.strip_prefix("0x") {
+            Some(h) => u32::from_str_radix(h, 16)?,
+            None => s.parse()?,
+        })
+    }
+
+    fn step(core: &ScrinCore, shot: &ShotSlot, line: &str) -> AnyResult<()> {
+        let (cmd, rest) = line.split_once(' ').unwrap_or((line, ""));
+        let f = floats(&rest.replace(' ', ","));
+        println!("STEP: {line}");
+        match (cmd, &f[..]) {
+            ("wait", _) => std::thread::sleep(Duration::from_millis(rest.trim().parse()?)),
+            ("tap", [x, y]) => {
+                touch(core, TouchPhase::Down, *x, *y)?;
+                std::thread::sleep(Duration::from_millis(60));
+                touch(core, TouchPhase::Up, *x, *y)?;
+            }
+            ("swipe", [x1, y1, x2, y2]) => {
+                touch(core, TouchPhase::Down, *x1, *y1)?;
+                for i in 1..=10u8 {
+                    let t = f32::from(i) / 10.0;
+                    std::thread::sleep(Duration::from_millis(25));
+                    touch(
+                        core,
+                        TouchPhase::Move,
+                        x1 + (x2 - x1) * t,
+                        y1 + (y2 - y1) * t,
+                    )?;
+                }
+                touch(core, TouchPhase::Up, *x2, *y2)?;
+            }
+            ("click", [x, y]) => {
+                core.send_input(RemoteInput::MouseMove { x: *x, y: *y })?;
+                for down in [true, false] {
+                    core.send_input(RemoteInput::MouseButton {
+                        button: MouseButtonKind::Left,
+                        down,
+                    })?;
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+            ("wheel", _) => core.send_input(RemoteInput::Wheel {
+                dx: 0,
+                dy: rest.trim().parse()?,
+            })?,
+            ("key", _) => {
+                let usage = hid(rest.trim())?;
+                for down in [true, false] {
+                    core.send_input(RemoteInput::Key {
+                        hid_usage: usage,
+                        down,
+                        modifiers: 0,
+                    })?;
+                }
+            }
+            ("text", _) => core.send_input(RemoteInput::Text {
+                text: rest.to_owned(),
+            })?,
+            ("shot", _) => {
+                *shot.lock().unwrap_or_else(PoisonError::into_inner) = Some(rest.trim().to_owned());
+            }
+            _ => println!("STEP SKIPPED (unknown): {line}"),
+        }
+        Ok(())
+    }
+
+    fn run_script(core: &ScrinCore, shot: &ShotSlot, path: &str) -> AnyResult<()> {
+        for raw in std::fs::read_to_string(path)?.lines() {
+            let line = raw.split('#').next().unwrap_or("").trim();
+            if !line.is_empty() {
+                step(core, shot, line)?;
+            }
+        }
+        println!("SCRIPT DONE");
         Ok(())
     }
 
@@ -206,6 +302,8 @@ mod run {
         let mut i420 = I420::default();
         let mut bgra = Vec::new();
         let (mut decoded, mut saved, mut can_input, mut gestured) = (0u32, false, false, false);
+        let shot: ShotSlot = Arc::new(Mutex::new(None));
+        let mut script: Option<std::thread::JoinHandle<()>> = None;
         let mut active_at = None::<Instant>;
         let deadline = Duration::from_secs(a.seconds);
         loop {
@@ -245,22 +343,27 @@ mod run {
                         continue;
                     };
                     decoded += 1;
-                    if !saved {
+                    let want = shot.lock().unwrap_or_else(PoisonError::into_inner).take();
+                    if !saved || want.is_some() {
                         i420.width = pic.width;
                         i420.height = pic.height;
                         i420.y.clone_from(&pic.y);
                         i420.u.clone_from(&pic.u);
                         i420.v.clone_from(&pic.v);
                         i420_to_bgra(&i420, &mut bgra)?;
-                        save_png(&a.png, pic.width, pic.height, &bgra)?;
-                        saved = true;
-                        println!(
-                            "FIRST PICTURE: {}x{} frame {id} after {} ms of Active -> {}",
-                            pic.width,
-                            pic.height,
-                            active_at.map_or(0, |t| t.elapsed().as_millis()),
-                            a.png
-                        );
+                        let path = want.clone().unwrap_or_else(|| a.png.clone());
+                        save_png(&path, pic.width, pic.height, &bgra)?;
+                        if saved {
+                            println!("SHOT: {}x{} frame {id} -> {path}", pic.width, pic.height);
+                        } else {
+                            saved = true;
+                            println!(
+                                "FIRST PICTURE: {}x{} frame {id} after {} ms of Active -> {path}",
+                                pic.width,
+                                pic.height,
+                                active_at.map_or(0, |t| t.elapsed().as_millis()),
+                            );
+                        }
                     }
                 }
                 Ev::Stats(s) => println!(
@@ -280,6 +383,19 @@ mod run {
             if saved && can_input && !gestured && (a.tap.is_some() || a.swipe.is_some()) {
                 gestured = true;
                 gesture(&core, &a)?;
+            }
+            if saved
+                && can_input
+                && script.is_none()
+                && let Some(path) = a.script.clone()
+            {
+                let core = Arc::clone(&core);
+                let shot = Arc::clone(&shot);
+                script = Some(std::thread::spawn(move || {
+                    if let Err(e) = run_script(&core, &shot, &path) {
+                        println!("SCRIPT ERROR: {e}");
+                    }
+                }));
             }
         }
         println!("DECODED: {decoded}");

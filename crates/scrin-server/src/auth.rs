@@ -23,6 +23,10 @@ pub const LABEL_PRESENCE: &str = "scrin rendezvous presence v1";
 pub const LABEL_RESOLVE: &str = "scrin rendezvous resolve v1";
 pub const LABEL_REPORT_FAILURE: &str = "scrin rendezvous report-failure v1";
 pub const LABEL_ABUSE: &str = "scrin rendezvous abuse v1";
+/// `POST /v1/locator` (D24); body is empty.
+pub const LABEL_LOCATOR: &str = "scrin rendezvous locator v1";
+/// `POST /v1/locator/release` (D24); body is empty.
+pub const LABEL_LOCATOR_RELEASE: &str = "scrin rendezvous locator-release v1";
 
 /// Accepted clock skew between client and server, both directions.
 pub const MAX_SKEW_SECS: u64 = 300;

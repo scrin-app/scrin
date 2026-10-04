@@ -67,6 +67,7 @@ jobs:
               - 'tsconfig*.json'
               - 'eslint.config.*'
               - '.oxlintrc.json'
+              - 'size-budget.json'
             proto:
               - *shared
               - 'proto/**'
@@ -161,6 +162,10 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      # size budgets (F-011): web gzip + committed wasm; native artifacts are not built here -> SKIP rows
+      - run: pnpm --filter web build
+      - shell: pwsh
+        run: ./scripts/size-budgets.ps1
       - run: pnpm audit --audit-level high
 
   proto:

@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use iroh::{EndpointAddr, TransportAddr};
 use scrin_crypto::code::{DEFAULT_TTL, OneTimeCode};
 use scrin_crypto::identity::{DeviceId, Identity};
+use scrin_crypto::phrase::{Lang, Passphrase};
 use scrin_crypto::sas::Sas;
 use scrin_crypto::trust::{Profile, TrustStore, TrustedPeer};
 use scrin_media::adapt::Mode;
@@ -20,7 +21,7 @@ use scrin_media::clock::{ClockSync, Exchange};
 use scrin_net::framing::{StreamKind, accept_stream, open_stream, write_frame};
 use scrin_net::handshake::{
     ControlStream, HostCode, RejectReason as NetReject, controller_auth_trusted, controller_pair,
-    host_auth_trusted, host_pair,
+    controller_pair_phrase, host_auth_trusted, host_pair,
 };
 use scrin_net::reconnect::Backoff;
 use scrin_net::{
@@ -47,7 +48,7 @@ use crate::media::{
     HostStream, HostStreamConfig, MediaCtl, Receiver, ReceiverConfig, ReceiverStats,
     start_host_stream, start_receiver,
 };
-use crate::rendezvous::{AddrHint, RendezvousClient, ServerError, relay_urls};
+use crate::rendezvous::{AddrHint, Locator, RendezvousClient, ServerError, relay_urls};
 use crate::resolve::{ConnectTarget, Resolver, StaticResolver, encode_ticket, parse_target};
 use crate::secret::{SecretStore, platform_store};
 use crate::wire::{
@@ -72,6 +73,8 @@ const FAILURE_WINDOW_MS: u64 = 10 * 60 * 1000;
 const LOCKOUT_MS: u64 = 60 * 1000;
 /// QUIC application close code for "host busy".
 const BUSY_CODE: u32 = 0x5c10;
+/// Ask for a new passphrase locator this long before the old one expires.
+const PHRASE_RENEW_MS: u64 = 15_000;
 
 /// How the engine is built. [`EngineConfig::new`] gives production defaults.
 pub struct EngineConfig {
@@ -260,6 +263,8 @@ pub async fn start(
         rendezvous,
         registered_id,
         presence_task,
+        phrase: None,
+        phrase_generation: 0,
     };
     tokio::spawn(actor.run(rx));
     Ok((EngineHandle { tx }, events_rx))
@@ -482,6 +487,20 @@ impl CodeState {
     }
 }
 
+/// The passphrase on screen (D24). The locator comes from the server and
+/// lives until `expires_at`; the secret words are re-drawn with every code
+/// rotation and after each use, so one phrase allows one guess too.
+struct PhraseState {
+    lang: Lang,
+    /// Bumped by every enable/disable, so a late server answer for an older
+    /// request is ignored.
+    generation: u64,
+    /// `None` while the locator request is in flight.
+    current: Option<Passphrase>,
+    /// Epoch ms.
+    expires_at: u64,
+}
+
 enum ActorMsg {
     Call(Command, oneshot::Sender<Result<Reply>>),
     Shutdown(oneshot::Sender<()>),
@@ -511,6 +530,10 @@ enum ActorMsg {
     Presence {
         id: Option<String>,
         online: bool,
+    },
+    Locator {
+        generation: u64,
+        result: std::result::Result<Locator, ServerError>,
     },
 }
 
@@ -615,6 +638,8 @@ struct Actor {
     rendezvous: Option<RendezvousClient>,
     registered_id: Option<String>,
     presence_task: Option<JoinHandle<()>>,
+    phrase: Option<PhraseState>,
+    phrase_generation: u64,
 }
 
 impl Actor {
@@ -681,10 +706,89 @@ impl Actor {
                 self.error(Some(&session), "media", message);
             }
             ActorMsg::Presence { id, online } => self.on_presence(id, online),
+            ActorMsg::Locator { generation, result } => self.on_locator(generation, result),
         }
     }
 
     // ---- status, code, trust ------------------------------------------------
+
+    /// Asks the server for a new locator (new first two words). The secret
+    /// words are drawn when the answer arrives.
+    fn request_locator(&mut self, lang: Lang) -> Result<()> {
+        let rv = self.rendezvous.clone().ok_or(EngineError::Invalid(
+            "a passphrase needs a rendezvous server",
+        ))?;
+        self.phrase_generation += 1;
+        let generation = self.phrase_generation;
+        self.phrase = Some(PhraseState {
+            lang,
+            generation,
+            current: None,
+            expires_at: 0,
+        });
+        self.code.slot.clear_phrase();
+        let tx = self.self_tx.clone();
+        tokio::spawn(async move {
+            let result = rv.allocate_locator().await;
+            let _ = tx.send(ActorMsg::Locator { generation, result });
+        });
+        Ok(())
+    }
+
+    fn disable_phrase(&mut self) {
+        self.phrase_generation += 1;
+        self.code.slot.clear_phrase();
+        if self.phrase.take().is_some()
+            && let Some(rv) = self.rendezvous.clone()
+        {
+            tokio::spawn(async move {
+                if let Err(e) = rv.release_locator().await {
+                    debug!(error = %e, "could not release the passphrase locator");
+                }
+            });
+        }
+    }
+
+    fn on_locator(&mut self, generation: u64, result: std::result::Result<Locator, ServerError>) {
+        let now = self.clock.now_ms();
+        let Some(state) = self.phrase.as_mut().filter(|p| p.generation == generation) else {
+            return;
+        };
+        let drawn = result.map_err(|e| e.to_string()).and_then(|l| {
+            Passphrase::generate(l.locator)
+                .map(|p| (p, l.expires_in))
+                .map_err(|e| e.to_string())
+        });
+        match drawn {
+            Ok((p, ttl_s)) => {
+                state.expires_at = now.saturating_add(ttl_s.saturating_mul(1000));
+                self.code.slot.set_phrase(p.pake_password());
+                state.current = Some(p);
+            }
+            Err(e) => {
+                self.phrase = None;
+                self.error(None, "phrase-unavailable", e);
+            }
+        }
+        self.emit(Event::Status(self.status()));
+    }
+
+    /// After a code rotation or a used phrase: same locator, new secret words.
+    fn redraw_phrase_secret(&mut self) {
+        let Some(state) = self.phrase.as_mut() else {
+            return;
+        };
+        let Some(locator) = state.current.as_ref().map(Passphrase::locator) else {
+            return;
+        };
+        match Passphrase::generate(locator) {
+            Ok(p) => {
+                self.code.slot.set_phrase(p.pake_password());
+                state.current = Some(p);
+            }
+            Err(e) => warn!(error = %e, "could not draw passphrase words"),
+        }
+    }
 
     fn on_presence(&mut self, id: Option<String>, online: bool) {
         let mut changed = self.server_online != Some(online);
@@ -710,6 +814,15 @@ impl Actor {
     fn status(&self) -> Status {
         let id = self.identity.device_id();
         let addr = dial_addr(&self.endpoint);
+        let (phrase, phrase_expires_at) = self
+            .phrase
+            .as_ref()
+            .and_then(|s| {
+                s.current
+                    .as_ref()
+                    .map(|p| (p.display(s.lang), s.expires_at))
+            })
+            .unwrap_or_default();
         Status {
             device_id: id.to_hex(),
             fingerprint: id.fingerprint(),
@@ -727,19 +840,26 @@ impl Actor {
                 .unwrap_or_default(),
             code_issued_at: self.code.issued_at,
             code_expires_at: self.code.expires_at,
+            phrase,
+            phrase_expires_at,
             backend: self.backend.name().into(),
         }
     }
 
     fn rotate_code(&mut self) -> Result<()> {
         let now = self.clock.now_ms();
-        self.code = match self.lockout_until {
-            Some(until) if now < until => CodeState::locked(&self.clock, until)?,
-            _ => {
-                self.lockout_until = None;
-                CodeState::new(self.code_ttl, &self.clock)?
-            }
+        let lock = self.lockout_until.filter(|until| now < *until);
+        self.code = if let Some(until) = lock {
+            CodeState::locked(&self.clock, until)?
+        } else {
+            self.lockout_until = None;
+            CodeState::new(self.code_ttl, &self.clock)?
         };
+        // The new slot starts without a phrase; arm fresh secret words unless
+        // locked out (a lockout disables every short secret).
+        if lock.is_none() {
+            self.redraw_phrase_secret();
+        }
         self.emit(Event::Status(self.status()));
         Ok(())
     }
@@ -802,6 +922,14 @@ impl Actor {
             Command::GetStatus => Ok(Reply::Status(self.status())),
             Command::RegenerateCode => {
                 self.rotate_code()?;
+                Ok(Reply::Status(self.status()))
+            }
+            Command::EnablePhrase { lang } => {
+                self.request_locator(Lang::from_locale(&lang))?;
+                Ok(Reply::Status(self.status()))
+            }
+            Command::DisablePhrase => {
+                self.disable_phrase();
                 Ok(Reply::Status(self.status()))
             }
             Command::Connect {
@@ -1958,6 +2086,16 @@ impl Actor {
         if code_due && let Err(e) = self.rotate_code() {
             warn!(error = %e, "could not rotate the one-time code");
         }
+        // New locator (new words) shortly before the server forgets the old one.
+        if let Some(lang) = self
+            .phrase
+            .as_ref()
+            .filter(|p| p.current.is_some() && now.saturating_add(PHRASE_RENEW_MS) >= p.expires_at)
+            .map(|p| p.lang)
+            && let Err(e) = self.request_locator(lang)
+        {
+            warn!(error = %e, "could not renew the passphrase");
+        }
         if self.last_second.elapsed() >= Duration::from_secs(1) {
             self.last_second = Instant::now();
             for id in &ids {
@@ -2176,6 +2314,23 @@ async fn controller_connect(
             .resolve(&id)
             .await
             .map_err(|e| fail("offline", e.to_string(), false))?,
+        ConnectTarget::Phrase { locator, password } => {
+            let addr = resolver
+                .resolve_locator(locator)
+                .await
+                .map_err(|e| fail("offline", e.to_string(), false))?;
+            let conn = dial(endpoint, addr).await?;
+            return match controller_pair_phrase(&conn, endpoint.device_id(), &password).await {
+                Ok(o) => Ok(CtlPaired {
+                    peer: o.peer,
+                    sas: Some(o.sas),
+                    control: o.control,
+                    conn,
+                    trusted: false,
+                }),
+                Err(e) => Err(net_failure(&e, &conn, false)),
+            };
+        }
     };
     let me = endpoint.device_id();
     if !code.trim().is_empty() {

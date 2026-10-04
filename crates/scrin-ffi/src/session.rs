@@ -26,7 +26,8 @@ use scrin_crypto::trust::Profile;
 use scrin_media::fec::{FrameEncoder, FrameReassembler, MediaKind, ShardHeader};
 use scrin_net::datagram::{recv_datagram, send_datagram};
 use scrin_net::handshake::{
-    ControlStream, HostCode, controller_auth_trusted, controller_pair, host_pair,
+    ControlStream, HostCode, controller_auth_trusted, controller_pair, controller_pair_phrase,
+    host_pair,
 };
 use scrin_net::{Connection, NetError, SendStream};
 use scrin_proto::v1::{self, envelope::Payload};
@@ -694,6 +695,10 @@ pub(crate) async fn controller_flow(
     let acts = cs.handle(ms_since(t0), ControllerEvent::Connect { requested });
     controller_apply(&s, &cs, None, acts).await;
 
+    let phrase = match &target {
+        Target::Phrase { password, .. } => Some(password.clone()),
+        _ => None,
+    };
     // Boxed: iroh's connect future is ~23 KB, too large to keep on the task stack.
     let dial = Box::pin(async {
         let addr = resolve_target(&shared, target).await?;
@@ -715,9 +720,13 @@ pub(crate) async fn controller_flow(
     let acts = cs.handle(ms_since(t0), ControllerEvent::Connected);
     controller_apply(&s, &cs, None, acts).await;
 
-    let unattended = code.trim().is_empty();
+    let unattended = phrase.is_none() && code.trim().is_empty();
     let pair = async {
-        if unattended {
+        if let Some(pw) = &phrase {
+            controller_pair_phrase(&conn, shared.device_id(), pw)
+                .await
+                .map(|o| (o.control, Some(o.sas)))
+        } else if unattended {
             controller_auth_trusted(&conn, &shared.identity)
                 .await
                 .map(|c| (c, None))
@@ -775,6 +784,13 @@ async fn resolve_target(shared: &Shared, target: Target) -> Result<EndpointAddr,
                 .as_ref()
                 .ok_or_else(|| ScrinError::input("a scrin ID needs a server; use a link"))?;
             Ok(server.resolve(&shared.identity, &id).await?)
+        }
+        Target::Phrase { locator, .. } => {
+            let server = shared
+                .server
+                .as_ref()
+                .ok_or_else(|| ScrinError::input("a passphrase needs a server"))?;
+            Ok(server.lookup_locator(locator).await?)
         }
     }
 }
@@ -994,7 +1010,8 @@ async fn media_rx(conn: Connection, s: Arc<Session>) {
                 lock(&s.meter).add_bytes(d.len());
                 let Ok(header) = ShardHeader::decode(&d) else { continue };
                 log.record(&header, micros_since(started), d.len());
-                if let Ok(Some(f)) = r.push(&d) {
+                // Audio has no consumer here yet: only video access units reach Kotlin.
+                if let Ok(Some(f)) = r.push(&d) && f.kind == MediaKind::Video {
                     lock(&s.meter).add_frame();
                     s.listener
                         .on_video_frame(f.data, f.keyframe, f.frame_id, micros_since(started));

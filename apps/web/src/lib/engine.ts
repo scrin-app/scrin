@@ -37,6 +37,27 @@ export function useRegenerateCode() {
   });
 }
 
+/** Route param standing in for a dictated passphrase (the words never enter the URL). */
+export const PHRASE_TARGET = 'phrase';
+
+export const passphraseQuery = queryOptions({
+  queryKey: ['engine', 'passphrase'],
+  queryFn: async () => (await host.engine.getPassphrase?.()) ?? null,
+  // Words change after each use and when the locator is renewed.
+  refetchInterval: 5000,
+});
+
+/** `lang` shows the words in that language; `null` turns the passphrase off. */
+export function useSetPassphrase() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (lang: string | null) => (await host.engine.setPassphrase?.(lang)) ?? null,
+    onSuccess: (phrase) => {
+      qc.setQueryData(passphraseQuery.queryKey, phrase);
+    },
+  });
+}
+
 interface ConnectState {
   sessionId: string | null;
   stage: ConnectStage;
@@ -89,7 +110,9 @@ export function useConnectFlow(id: string, code: string | null) {
       if (alive) dispatch({ type: 'event', event });
     });
     dispatch({ type: 'reset' });
-    void host.engine.connect(id, code).then((handle) => {
+    // A passphrase carries its own secret: the words are the target.
+    const [target, secret] = id === PHRASE_TARGET ? [code, ''] : [id, code];
+    void host.engine.connect(target, secret).then((handle) => {
       if (!alive) {
         handle.cancel();
         return;

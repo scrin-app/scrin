@@ -6,6 +6,7 @@
 import type { Incoming, VideoConfig } from '@scrin/protocol';
 
 import type { EngineEvent } from '../../platform';
+import type { ClipboardMessage } from './clipboard-pb';
 import type { GatewaySession } from './session';
 
 export interface LiveSession {
@@ -13,8 +14,13 @@ export interface LiveSession {
   readonly session: GatewaySession;
   /** Latest `VideoConfig` (it may arrive before the canvas mounts). */
   videoConfig: VideoConfig | null;
+  /** `scrin.v1.Permission` values the host granted (accept / updates). */
+  granted: readonly number[];
   readonly onMessage: Set<(m: Incoming) => void>;
   readonly onVideo: Set<(frameId: number, keyframe: boolean, data: Uint8Array) => void>;
+  /** Reassembled Opus packets. */
+  readonly onAudio: Set<(frameId: number, data: Uint8Array) => void>;
+  readonly onClipboard: Set<(m: ClipboardMessage) => void>;
   /** Publishes an engine event (stats) to the UI. */
   emit(e: EngineEvent): void;
 }

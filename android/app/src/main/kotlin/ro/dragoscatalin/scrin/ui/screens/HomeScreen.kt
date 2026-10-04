@@ -24,6 +24,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -140,48 +143,91 @@ private fun MyDeviceCard(hub: SessionHub, code: String?, secondsLeft: Long, prog
 
 @Composable
 private fun ConnectCard(hub: SessionHub, onConnect: () -> Unit) {
+    var useWords by rememberSaveable { mutableStateOf(false) }
     var target by rememberSaveable { mutableStateOf("") }
+    var words by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     var problem by remember { mutableStateOf<ConnectForm.Problem?>(null) }
     val submit = {
-        problem = hub.connect(target, code.text)
+        problem = if (useWords) hub.connectWords(words) else hub.connect(target, code.text)
         if (problem == null) onConnect()
     }
     SectionCard {
         SectionTitle(stringResource(R.string.home_connect_title))
         Text(stringResource(R.string.home_connect_body), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedTextField(
-            value = target,
-            onValueChange = { target = it; problem = null },
-            label = { Text(stringResource(R.string.home_partner_id)) },
-            leadingIcon = { Icon(ScrinIcons.Link, contentDescription = null) },
-            singleLine = true,
-            isError = problem == ConnectForm.Problem.TARGET_EMPTY || problem == ConnectForm.Problem.TARGET_INVALID,
-            supportingText = {
-                when (problem) {
-                    ConnectForm.Problem.TARGET_EMPTY -> Text(stringResource(R.string.error_target_empty))
-                    ConnectForm.Problem.TARGET_INVALID -> Text(stringResource(R.string.error_target_invalid))
-                    else -> Text(stringResource(R.string.home_partner_id_hint))
-                }
-            },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Next, autoCorrectEnabled = false),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = code,
-            onValueChange = {
-                code = TextFieldValue(Format.codeInput(it.text), TextRange(Format.codeCaret(it.text, it.selection.end)))
-                problem = null
-            },
-            label = { Text(stringResource(R.string.home_code_field)) },
-            singleLine = true,
-            textStyle = CodeStyle,
-            isError = problem == ConnectForm.Problem.CODE_INCOMPLETE,
-            supportingText = { if (problem == ConnectForm.Problem.CODE_INCOMPLETE) Text(stringResource(R.string.error_code_incomplete)) },
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Go, autoCorrectEnabled = false),
-            keyboardActions = KeyboardActions(onGo = { submit() }),
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Text(stringResource(R.string.connect_with), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                selected = !useWords,
+                onClick = { useWords = false; problem = null },
+                shape = SegmentedButtonDefaults.itemShape(0, 2),
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.connect_mode_code)) }
+            SegmentedButton(
+                selected = useWords,
+                onClick = { useWords = true; problem = null },
+                shape = SegmentedButtonDefaults.itemShape(1, 2),
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text(stringResource(R.string.connect_mode_words)) }
+        }
+        if (useWords) {
+            OutlinedTextField(
+                value = words,
+                onValueChange = { words = it; problem = null },
+                label = { Text(stringResource(R.string.connect_words_field)) },
+                leadingIcon = { Icon(ScrinIcons.Link, contentDescription = null) },
+                singleLine = true,
+                isError = problem == ConnectForm.Problem.WORDS_INVALID,
+                supportingText = {
+                    when {
+                        problem == ConnectForm.Problem.WORDS_INVALID -> Text(stringResource(R.string.error_words_invalid))
+                        !hub.serverConfigured -> Text(stringResource(R.string.phrase_needs_server))
+                        else -> Text(stringResource(R.string.phrase_hint))
+                    }
+                },
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Go,
+                    autoCorrectEnabled = false,
+                ),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            OutlinedTextField(
+                value = target,
+                onValueChange = { target = it; problem = null },
+                label = { Text(stringResource(R.string.home_partner_id)) },
+                leadingIcon = { Icon(ScrinIcons.Link, contentDescription = null) },
+                singleLine = true,
+                isError = problem == ConnectForm.Problem.TARGET_EMPTY || problem == ConnectForm.Problem.TARGET_INVALID,
+                supportingText = {
+                    when (problem) {
+                        ConnectForm.Problem.TARGET_EMPTY -> Text(stringResource(R.string.error_target_empty))
+                        ConnectForm.Problem.TARGET_INVALID -> Text(stringResource(R.string.error_target_invalid))
+                        else -> Text(stringResource(R.string.home_partner_id_hint))
+                    }
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Next, autoCorrectEnabled = false),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = code,
+                onValueChange = {
+                    code = TextFieldValue(Format.codeInput(it.text), TextRange(Format.codeCaret(it.text, it.selection.end)))
+                    problem = null
+                },
+                label = { Text(stringResource(R.string.home_code_field)) },
+                singleLine = true,
+                textStyle = CodeStyle,
+                isError = problem == ConnectForm.Problem.CODE_INCOMPLETE,
+                supportingText = { if (problem == ConnectForm.Problem.CODE_INCOMPLETE) Text(stringResource(R.string.error_code_incomplete)) },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Go, autoCorrectEnabled = false),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(ScrinIcons.Shield, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))

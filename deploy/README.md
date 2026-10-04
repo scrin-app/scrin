@@ -2,7 +2,9 @@
 
 One container runs all three server roles of scrin:
 
-- **rendezvous** — the scrin ID registry (`/v1/register`, `/v1/presence`, `/v1/resolve`, reports);
+- **rendezvous** — the scrin ID registry (`/v1/register`, `/v1/presence`, `/v1/resolve`,
+  passphrase locators `/v1/locator`, reports). Contract:
+  [`crates/scrin-server/RENDEZVOUS.md`](../crates/scrin-server/RENDEZVOUS.md);
 - **relay** — an embedded [iroh relay](https://docs.rs/iroh-relay) at `/relay`, used when two
   devices cannot reach each other directly; only devices registered on *your* server may use it;
 - **gateway** — the browser bridge: WebTransport at `/v1/gw` (UDP 443) and a WebSocket
@@ -93,6 +95,7 @@ All flags have a `SCRIN_*` environment variable; `scrin-server --help` prints th
 | `SCRIN_RELAY_OPEN` | `false` | let unregistered devices use the relay (private networks only) |
 | `SCRIN_RELAY_BPS` | `0` | per-client relay receive limit, bytes/s |
 | `SCRIN_PRESENCE_TTL` | `60` | seconds a heartbeat keeps a device online |
+| `SCRIN_LOCATOR_TTL` | `600` | seconds a passphrase locator (`POST /v1/locator`) stays valid |
 | `SCRIN_ABUSE_BLOCK_THRESHOLD` | `3` | distinct reporters that block a device key |
 | `SCRIN_GW_MAX_SECS` | `3600` | max browser session (anonymous cap, ADR-0009) |
 | `SCRIN_GW_IDLE_SECS` | `120` | idle timeout of a browser session |

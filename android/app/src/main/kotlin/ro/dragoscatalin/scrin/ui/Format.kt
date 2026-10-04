@@ -55,7 +55,11 @@ object Format {
 
 /** Validation of the "connect to a device" form, without touching the native core. */
 object ConnectForm {
-    enum class Problem { TARGET_EMPTY, TARGET_INVALID, CODE_INCOMPLETE }
+    enum class Problem { TARGET_EMPTY, TARGET_INVALID, CODE_INCOMPLETE, WORDS_INVALID }
+
+    /** Passphrase (D24): five words; the core also takes each cut to its first four letters. */
+    const val PASSPHRASE_WORDS = 5
+    private val WORD_SEPARATORS = Regex("[\\s\\-.,·]+")
 
     private val HEX_ID = Regex("^[0-9a-fA-F]{64}$")
     /** Compact legacy form. */
@@ -64,14 +68,32 @@ object ConnectForm {
     private val TICKET_URI = Regex("^scrin:[0-9a-fA-F]{64}(\\?\\S*)?$")
     private val SCRIN_ID = Regex("^\\d{9}$")
 
-    /** Whitespace dropped; a scrin ID typed as `123 456 789` / `123-456-789` becomes 9 digits. */
+    /** Words of a dictated passphrase, or `null` when [raw] is not five words of letters. */
+    fun passphraseWords(raw: String): List<String>? {
+        val words = raw.split(WORD_SEPARATORS).filter { it.isNotEmpty() }
+        return words.takeIf { w -> w.size == PASSPHRASE_WORDS && w.all { it.length in 3..16 && it.all(Char::isLetter) } }
+    }
+
+    fun isPassphrase(raw: String): Boolean = passphraseWords(raw) != null
+
+    /** The five words joined by single spaces, as the core parses them. */
+    fun normalizeWords(raw: String): String = passphraseWords(raw)?.joinToString(" ") ?: raw.trim()
+
+    fun validateWords(words: String): Problem? = if (isPassphrase(words)) null else Problem.WORDS_INVALID
+
+    /**
+     * Whitespace dropped; a scrin ID typed as `123 456 789` / `123-456-789` becomes 9 digits.
+     * Five words (pasted into the ID field) stay words, single-spaced.
+     */
     fun normalizeTarget(raw: String): String {
+        passphraseWords(raw)?.let { return it.joinToString(" ") }
         val t = raw.filterNot { it.isWhitespace() }
         val digits = t.replace("-", "")
         return if (SCRIN_ID.matches(digits)) digits else t
     }
 
     fun validate(target: String, code: String): Problem? {
+        if (isPassphrase(target)) return null
         val t = normalizeTarget(target)
         return when {
             t.isEmpty() -> Problem.TARGET_EMPTY

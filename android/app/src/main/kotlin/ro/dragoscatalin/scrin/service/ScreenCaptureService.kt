@@ -12,6 +12,7 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -42,6 +43,13 @@ import ro.dragoscatalin.scrin.media.fitSize
  *
  * Consent is requested for every session by the UI and passed in the start intent;
  * the token is never stored (D08).
+ *
+ * A rotation or resolution change of the panel replaces the encoder at the new size, so the
+ * next access unit is an IDR with fresh SPS/PPS (the core prepends them to keyframes).
+ *
+ * Audio (AudioPlaybackCapture → Opus) is not wired yet: the core has no audio path across the
+ * FFI (no `send_audio_frame`, no audio `VideoConfig` counterpart, controllers ignore
+ * `MediaKind::Audio` shards), so RECORD_AUDIO is not declared until it lands (A-004 partial).
  */
 class ScreenCaptureService : Service(), MediaSinks {
     companion object {
@@ -92,7 +100,19 @@ class ScreenCaptureService : Service(), MediaSinks {
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
     private var encoder: MediaCodec? = null
+    private var encoderSurface: android.view.Surface? = null
     private var thread: HandlerThread? = null
+    private var handler: Handler? = null
+    private var size: Pair<Int, Int> = 0 to 0
+
+    /** Rotation or a resolution change of the panel: re-encode at the new size (new SPS + IDR). */
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == Display.DEFAULT_DISPLAY) resizeIfNeeded()
+        }
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -147,7 +167,7 @@ class ScreenCaptureService : Service(), MediaSinks {
         projection = p
         val t = HandlerThread("scrin-encoder").also { it.start() }
         thread = t
-        val handler = Handler(t.looper)
+        val handler = Handler(t.looper).also { this.handler = it }
         p.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 hub.end()
@@ -156,29 +176,79 @@ class ScreenCaptureService : Service(), MediaSinks {
         }, handler)
 
         val real = realMetrics()
-        val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        val caps = enc.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC).videoCapabilities
-        val (w, h) = fitSize(real.widthPixels, real.heightPixels, MAX_LONG, MAX_SHORT) { cw, ch -> caps?.isSizeSupported(cw, ch) ?: true }
-        if (!configure(enc, w, h)) {
-            enc.release()
+        val (w, h) = targetSize(real)
+        val input = startEncoder(w, h, handler)
+        if (input == null) {
             hub.end()
             stopSelf()
             return
         }
-        enc.setCallback(EncoderCallback(w, h), handler)
-        val input = enc.createInputSurface()
-        enc.start()
-        encoder = enc
-        Log.i(TAG, "encoder ${enc.name} ${w}x$h from ${real.widthPixels}x${real.heightPixels} @ $FPS fps ${BITRATE / 1000} kb/s CBR")
+        Log.i(TAG, "encoder ${encoder?.name} ${w}x$h from ${real.widthPixels}x${real.heightPixels} @ $FPS fps ${BITRATE / 1000} kb/s CBR")
         display = p.createVirtualDisplay(
             "scrin", w, h, real.densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, input, null, handler,
         )
+        getSystemService(DisplayManager::class.java).registerDisplayListener(displayListener, handler)
         hub.hostSinks = this
     }
 
-    /** CBR, low latency, periodic IDR; profile/level hints dropped if the encoder refuses them. */
+    private fun targetSize(real: DisplayMetrics): Pair<Int, Int> {
+        val caps = runCatching {
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).findEncoderForFormat(
+                MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, real.widthPixels, real.heightPixels),
+            )
+        }.getOrNull()
+        val video = caps?.let { name ->
+            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.firstOrNull { it.name == name }
+                ?.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)?.videoCapabilities
+        }
+        return fitSize(real.widthPixels, real.heightPixels, MAX_LONG, MAX_SHORT) { cw, ch -> video?.isSizeSupported(cw, ch) ?: true }
+    }
+
+    /** Creates, configures and starts an encoder for `w`×`h`; returns its input surface. */
+    private fun startEncoder(w: Int, h: Int, handler: Handler): android.view.Surface? {
+        val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        if (!configure(enc, w, h)) {
+            enc.release()
+            return null
+        }
+        enc.setCallback(EncoderCallback(enc, w, h), handler)
+        val input = enc.createInputSurface()
+        enc.start()
+        encoder = enc
+        encoderSurface = input
+        size = w to h
+        return input
+    }
+
+    /** On the encoder thread: a rotated panel gets a new encoder at the new size (IDR with fresh SPS/PPS). */
+    private fun resizeIfNeeded() {
+        val h = handler ?: return
+        val vd = display ?: return
+        val real = realMetrics()
+        val next = targetSize(real)
+        if (next == size) return
+        val oldEnc = encoder
+        val oldSurface = encoderSurface
+        val input = startEncoder(next.first, next.second, h) ?: return
+        vd.resize(next.first, next.second, real.densityDpi)
+        vd.surface = input
+        runCatching { oldEnc?.stop() }
+        runCatching { oldEnc?.release() }
+        runCatching { oldSurface?.release() }
+        Log.i(TAG, "display changed: encoder ${encoder?.name} now ${next.first}x${next.second} (new SPS + IDR)")
+    }
+
+    /**
+     * CBR, periodic IDR, low latency where the encoder supports it. Hints are dropped one by one
+     * when the encoder refuses them: Exynos AVC (Galaxy A51) fails configure with BAD_VALUE
+     * ("encoder does not support low-latency") if KEY_LOW_LATENCY is set at all.
+     */
     private fun configure(enc: MediaCodec, w: Int, h: Int): Boolean {
-        fun format(withProfile: Boolean) = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
+        val lowLatencySupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && runCatching {
+            enc.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                .isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)
+        }.getOrDefault(false)
+        fun format(withProfile: Boolean, lowLatency: Boolean) = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, BITRATE)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
@@ -192,11 +262,17 @@ class ScreenCaptureService : Service(), MediaSinks {
             }
             // Repeat the last frame when the screen is static so late joiners still get pictures.
             setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, 1_000_000L / FPS * 10)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            if (lowLatency && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
         }
-        return listOf(true, false).any { withProfile ->
-            runCatching { enc.configure(format(withProfile), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE) }
-                .onFailure { Log.w(TAG, "configure ${w}x$h profile=$withProfile failed: $it") }
+        val attempts = buildList {
+            if (lowLatencySupported) add(true to true)
+            add(true to false)
+            add(false to false)
+        }
+        return attempts.any { (withProfile, lowLatency) ->
+            runCatching { enc.configure(format(withProfile, lowLatency), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE) }
+                .onSuccess { Log.i(TAG, "configured ${w}x$h profile=$withProfile low-latency=$lowLatency") }
+                .onFailure { Log.w(TAG, "configure ${w}x$h profile=$withProfile low-latency=$lowLatency failed: $it") }
                 .isSuccess
         }
     }
@@ -209,7 +285,7 @@ class ScreenCaptureService : Service(), MediaSinks {
         return if (m.widthPixels > 0) m else resources.displayMetrics
     }
 
-    private inner class EncoderCallback(private val w: Int, private val h: Int) : MediaCodec.Callback() {
+    private inner class EncoderCallback(private val owner: MediaCodec, private val w: Int, private val h: Int) : MediaCodec.Callback() {
         private var frames = 0
         private var bytes = 0L
         private var keys = 0
@@ -218,6 +294,11 @@ class ScreenCaptureService : Service(), MediaSinks {
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
 
         override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
+            if (encoder !== owner) {
+                // A replaced encoder draining after a resize: drop its output.
+                runCatching { codec.releaseOutputBuffer(index, false) }
+                return
+            }
             val buf = codec.getOutputBuffer(index)
             if (buf != null && info.size > 0) {
                 val bytes = ByteArray(info.size)
@@ -250,6 +331,7 @@ class ScreenCaptureService : Service(), MediaSinks {
         }
 
         override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
+            if (encoder !== owner) return
             hub.end()
             stopSelf()
         }
@@ -279,13 +361,16 @@ class ScreenCaptureService : Service(), MediaSinks {
 
     override fun onDestroy() {
         hub.hostSinks = null
+        runCatching { getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener) }
         runCatching { display?.release() }
         runCatching { encoder?.stop() }
         runCatching { encoder?.release() }
+        runCatching { encoderSurface?.release() }
         runCatching { projection?.stop() }
         thread?.quitSafely()
         display = null
         encoder = null
+        encoderSurface = null
         projection = null
         super.onDestroy()
     }

@@ -30,6 +30,8 @@ fn err(e: &scrin_win::Error) -> BackendError {
 #[derive(Debug)]
 pub struct WinBackend {
     injector: Mutex<SendInputInjector>,
+    /// Spots Ctrl+Alt+Del so it goes to the service as a real SAS.
+    chord: Mutex<scrin_win::sas::ChordDetector>,
 }
 
 impl WinBackend {
@@ -39,6 +41,7 @@ impl WinBackend {
         let injector = SendInputInjector::primary().ok()?;
         Some(Self {
             injector: Mutex::new(injector),
+            chord: Mutex::default(),
         })
     }
 }
@@ -264,6 +267,21 @@ impl MediaBackend for WinBackend {
     }
 
     fn inject(&self, event: &InputEvent) -> Result<(), BackendError> {
+        if let InputEvent::Key(k) = event
+            && k.text.is_none()
+            && self
+                .chord
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .on_key(k.hid_usage, k.down)
+        {
+            // Injected Ctrl+Alt+Del does nothing; the service can send the
+            // real one. Without the service, fall through and inject anyway.
+            match scrin_win::win::sas_client::request_sas() {
+                Ok(()) => return Ok(()),
+                Err(e) => tracing::debug!(error = %e, "secure attention sequence unavailable"),
+            }
+        }
         let mut inj = self.injector.lock().unwrap_or_else(PoisonError::into_inner);
         let r = match event {
             InputEvent::Key(k) => match &k.text {

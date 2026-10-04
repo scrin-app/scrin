@@ -170,7 +170,13 @@ impl SendInputInjector {
         }
         let size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
         // SAFETY: `inputs` is a valid slice of fully initialised INPUT records of `size` bytes.
-        let sent = unsafe { SendInput(inputs, size) };
+        let mut sent = unsafe { SendInput(inputs, size) };
+        // The input desktop changed (lock screen, elevation prompt): attach
+        // to it and try once more. Only possible when started by scrin-service.
+        if sent as usize != inputs.len() && super::desktop::follow_input_desktop() {
+            // SAFETY: as above.
+            sent = unsafe { SendInput(inputs, size) };
+        }
         if sent as usize == inputs.len() {
             Ok(())
         } else {

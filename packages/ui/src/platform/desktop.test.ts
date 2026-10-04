@@ -40,11 +40,53 @@ const STATUS = {
   code: 'ABCD-EFGH',
   codeIssuedAt: 1,
   codeExpiresAt: 2,
+  phrase: '',
+  phraseExpiresAt: 0,
   online: true,
   backend: 'synthetic',
 };
 
 describe('DesktopHost', () => {
+  it('enables a passphrase and resolves with the words from the next status', async () => {
+    const f = fakeBridge();
+    f.responses.set('scrin_enable_phrase', STATUS);
+    const host = createDesktopHost({ bridge: f.bridge });
+    const pending = host.engine.setPassphrase?.('ro');
+    await Promise.resolve();
+    expect(f.calls.at(-1)).toEqual({ cmd: 'scrin_enable_phrase', args: { lang: 'ro' } });
+    f.fire({
+      type: 'status',
+      ...STATUS,
+      phrase: 'casă pădure lămâie zid ponei',
+      phraseExpiresAt: 9,
+    });
+    await expect(pending).resolves.toEqual({
+      words: 'casă pădure lămâie zid ponei',
+      expiresAt: 9,
+    });
+  });
+
+  it('disables the passphrase', async () => {
+    const f = fakeBridge();
+    const host = createDesktopHost({ bridge: f.bridge });
+    await expect(host.engine.setPassphrase?.(null)).resolves.toBeNull();
+    expect(f.calls.at(-1)?.cmd).toBe('scrin_disable_phrase');
+  });
+
+  it('gives up waiting for a passphrase after the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fakeBridge();
+      f.responses.set('scrin_enable_phrase', STATUS);
+      const host = createDesktopHost({ bridge: f.bridge });
+      const pending = host.engine.setPassphrase?.('en');
+      await vi.advanceTimersByTimeAsync(10_001);
+      await expect(pending).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('maps controller states to connect stages and ended', () => {
     const base = {
       type: 'stateChanged',

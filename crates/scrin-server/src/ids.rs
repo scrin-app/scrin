@@ -47,6 +47,26 @@ pub fn format_id(id: u64) -> String {
     format!("{id:09}")
 }
 
+/// Largest passphrase locator (D24): 20 bits, `0..=1_048_575`.
+pub const LOCATOR_MAX: u32 = (1 << 20) - 1;
+
+/// A fresh uniformly random locator. `2^20` divides `2^32`, so masking the low
+/// 20 bits of a uniform `u32` is unbiased. Uniqueness is the store's job.
+pub fn random_locator() -> Result<u32, getrandom::Error> {
+    let mut b = [0u8; 4];
+    getrandom::fill(&mut b)?;
+    Ok(u32::from_be_bytes(b) & LOCATOR_MAX)
+}
+
+/// Parses a decimal locator (at most 7 digits, `<= LOCATOR_MAX`).
+#[must_use]
+pub fn parse_locator(s: &str) -> Option<u32> {
+    if s.is_empty() || s.len() > 7 || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok().filter(|l| *l <= LOCATOR_MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -101,5 +121,30 @@ mod tests {
         assert_eq!(parse_id("1234567890"), None);
         assert_eq!(parse_id("12345678a"), None);
         assert_eq!(parse_id("+12345678"), None);
+    }
+
+    #[test]
+    fn random_locators_stay_in_20_bits_and_spread() {
+        let mut halves = [0u32; 2];
+        for _ in 0..10_000 {
+            let l = random_locator().expect("rng");
+            assert!(l <= LOCATOR_MAX, "{l}");
+            halves[usize::from(l > LOCATOR_MAX / 2)] += 1;
+        }
+        assert!(
+            halves.iter().all(|n| (4_500..5_500).contains(n)),
+            "{halves:?}"
+        );
+    }
+
+    #[test]
+    fn parse_locator_bounds() {
+        assert_eq!(parse_locator("0"), Some(0));
+        assert_eq!(parse_locator("1048575"), Some(LOCATOR_MAX));
+        assert_eq!(parse_locator("1048576"), None);
+        assert_eq!(parse_locator("00000001"), None);
+        assert_eq!(parse_locator(""), None);
+        assert_eq!(parse_locator("-1"), None);
+        assert_eq!(parse_locator("12a"), None);
     }
 }

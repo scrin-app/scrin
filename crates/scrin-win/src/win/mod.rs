@@ -4,9 +4,11 @@ pub mod audio;
 pub mod capture_dxgi;
 pub mod clipboard;
 pub mod decode_openh264;
+pub mod desktop;
 pub mod encode_mf;
 pub mod encode_openh264;
 pub mod input;
+pub mod sas_client;
 
 use crate::{Error, Result, VideoEncoder};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;

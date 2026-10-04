@@ -20,6 +20,9 @@ pub struct Metrics {
     pub gateway_active: AtomicI64,
     pub gateway_sessions: AtomicU64,
     pub gateway_bytes: AtomicU64,
+    pub locator_allocations: AtomicU64,
+    pub locator_lookups: AtomicU64,
+    pub locator_misses: AtomicU64,
 }
 
 pub fn inc(c: &AtomicU64) {
@@ -37,7 +40,7 @@ type Series = (
 const COUNTER: &str = "counter";
 const GAUGE: &str = "gauge";
 
-const SERIES: [Series; 15] = [
+const SERIES: [Series; 18] = [
     (
         "scrin_registrations_total",
         "New scrin IDs allocated.",
@@ -115,6 +118,24 @@ const SERIES: [Series; 15] = [
         "Bytes forwarded by the gateway (both directions).",
         COUNTER,
         |m| load(&m.gateway_bytes),
+    ),
+    (
+        "scrin_locator_allocations_total",
+        "Passphrase locators allocated (including rotations).",
+        COUNTER,
+        |m| load(&m.locator_allocations),
+    ),
+    (
+        "scrin_locator_lookups_total",
+        "Locator lookups that found a live device.",
+        COUNTER,
+        |m| load(&m.locator_lookups),
+    ),
+    (
+        "scrin_locator_misses_total",
+        "Locator lookups of unknown or expired locators.",
+        COUNTER,
+        |m| load(&m.locator_misses),
     ),
     (
         "scrin_relay_active_connections",

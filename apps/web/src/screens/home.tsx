@@ -15,6 +15,7 @@ import {
   Field,
   IconButton,
   Input,
+  Segmented,
   Skeleton,
   toast,
   useHost,
@@ -25,9 +26,11 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { m } from 'motion/react';
 import {
   ArrowRight,
+  Copy,
   History,
   Laptop,
   Lightbulb,
+  MessageSquareText,
   MonitorUp,
   RefreshCw,
   Share2,
@@ -36,7 +39,14 @@ import {
 import { useEffect, useRef, useState, type SubmitEvent } from 'react';
 
 import { PageHeader } from '../components/page-header';
-import { codeQuery, myIdQuery, useRegenerateCode } from '../lib/engine';
+import {
+  PHRASE_TARGET,
+  codeQuery,
+  myIdQuery,
+  passphraseQuery,
+  useRegenerateCode,
+  useSetPassphrase,
+} from '../lib/engine';
 import { usePending, usePrefs, type RecentConnection } from '../lib/prefs';
 import { useStagger } from '../lib/use-stagger';
 
@@ -145,8 +155,92 @@ function YourDeviceCard() {
         ) : (
           <CodeSkeleton ring />
         )}
+        {host.engine.setPassphrase ? (
+          <>
+            <div className="h-px bg-outline" />
+            <PassphrasePanel copy={copy} />
+          </>
+        ) : null}
       </div>
     </Card>
+  );
+}
+
+/** D24: five dictated words instead of ID + code (host side). */
+function PassphrasePanel({ copy }: { copy: (text: string, message: string) => Promise<void> }) {
+  const { t } = useTranslation();
+  const locale = useLocale();
+  const phrase = useQuery(passphraseQuery);
+  const set = useSetPassphrase();
+  const words = phrase.data?.words.split(' ') ?? [];
+
+  const show = () =>
+    set.mutate(locale, {
+      onSuccess: (p) => {
+        if (!p) toast.error(t('home.phraseUnavailable'));
+      },
+    });
+
+  return (
+    <section aria-labelledby="phrase-title" className="flex flex-col gap-3">
+      <div className="flex items-start gap-3">
+        <MessageSquareText aria-hidden className="mt-0.5 size-5 shrink-0 text-muted" />
+        <div className="min-w-0 flex-1">
+          <h3 id="phrase-title" className="text-sm font-medium">
+            {t('home.phraseTitle')}
+          </h3>
+          <p className="text-xs text-muted">{t('home.phraseHint')}</p>
+        </div>
+      </div>
+      {words.length === 5 ? (
+        <>
+          <ol aria-label={t('home.phraseTitle')} className="flex flex-wrap gap-2 font-mono text-lg">
+            {words.map((w, i) => (
+              <li
+                // Position is the identity: the same word may repeat.
+                key={`${String(i)}-${w}`}
+                className={
+                  i < 2
+                    ? 'rounded-md bg-surface-2 px-2.5 py-1'
+                    : 'rounded-md bg-accent/15 px-2.5 py-1 text-fg ring-1 ring-accent/40 ring-inset'
+                }
+              >
+                {w}
+              </li>
+            ))}
+          </ol>
+          <p className="text-xs text-muted">{t('home.phraseOnce')}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Copy aria-hidden />}
+              onClick={() => void copy(words.join(' '), t('home.phraseCopied'))}
+            >
+              {t('common.copy')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={set.isPending}
+              icon={<RefreshCw aria-hidden />}
+              onClick={show}
+            >
+              {t('home.phraseNew')}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => set.mutate(null)}>
+              {t('home.phraseHide')}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div>
+          <Button variant="secondary" size="sm" loading={set.isPending} onClick={show}>
+            {t('home.phraseShow')}
+          </Button>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -165,11 +259,14 @@ function CodeSkeleton({ ring = false }: { ring?: boolean }) {
 
 function ConnectCard({ prefillId }: { prefillId?: string | undefined }) {
   const { t } = useTranslation();
+  const host = useHost();
   const navigate = useNavigate();
   const setPendingCode = usePending((s) => s.setCode);
   const recent = usePrefs((s) => s.recent);
+  const [mode, setMode] = useState<'id' | 'words'>('id');
   const [id, setId] = useState(prefillId ? formatScrinId(prefillId) : '');
   const [code, setCode] = useState('');
+  const [words, setWords] = useState('');
   const [touched, setTouched] = useState(false);
   const codeRef = useRef<HTMLInputElement>(null);
 
@@ -180,12 +277,24 @@ function ConnectCard({ prefillId }: { prefillId?: string | undefined }) {
 
   const rawId = id.replace(/\D/g, '');
   const rawCode = code.replace(/\s/g, '');
+  const wordList = words
+    .trim()
+    .split(/[\s,.-]+/)
+    .filter(Boolean);
   const idError = touched && rawId.length !== 9 ? t('home.invalidId') : undefined;
   const codeError = touched && rawCode.length !== 8 ? t('home.invalidCode') : undefined;
+  const wordsError = touched && wordList.length !== 5 ? t('home.invalidWords') : undefined;
 
   const submit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     setTouched(true);
+    if (mode === 'words') {
+      if (wordList.length !== 5) return;
+      // The words travel as the pending "code"; the URL only says "phrase".
+      setPendingCode(wordList.join(' '));
+      void navigate({ to: '/connect/$id', params: { id: PHRASE_TARGET } });
+      return;
+    }
     if (rawId.length !== 9 || rawCode.length !== 8) return;
     setPendingCode(rawCode);
     void navigate({ to: '/connect/$id', params: { id: rawId } });
@@ -198,33 +307,68 @@ function ConnectCard({ prefillId }: { prefillId?: string | undefined }) {
         title={t('home.connectTitle')}
         description={t('home.connectHint')}
       />
+      {host.engine.supportsPassphrase ? (
+        <Segmented
+          className="mb-3"
+          label={t('home.connectWith')}
+          value={mode}
+          onValueChange={(v) => {
+            setMode(v);
+            setTouched(false);
+          }}
+          options={[
+            { value: 'id', label: t('home.modeIdCode') },
+            { value: 'words', label: t('home.modeWords') },
+          ]}
+        />
+      ) : null}
       <form
         onSubmit={submit}
         noValidate
-        className="grid gap-3 @md:grid-cols-[1fr_1fr_auto] @md:items-start"
+        className={
+          mode === 'words'
+            ? 'grid gap-3 @md:grid-cols-[1fr_auto] @md:items-start'
+            : 'grid gap-3 @md:grid-cols-[1fr_1fr_auto] @md:items-start'
+        }
       >
-        <Field label={t('home.partnerId')} error={idError}>
-          <Input
-            value={id}
-            onChange={(e) => setId(formatScrinId(e.currentTarget.value))}
-            inputMode="numeric"
-            autoComplete="off"
-            placeholder={t('home.partnerIdPlaceholder')}
-            className="font-mono text-base tracking-wider"
-          />
-        </Field>
-        <Field label={t('home.partnerCode')} error={codeError}>
-          <Input
-            ref={codeRef}
-            value={code}
-            onChange={(e) => setCode(formatCode(e.currentTarget.value))}
-            autoComplete="one-time-code"
-            autoCapitalize="characters"
-            spellCheck={false}
-            placeholder={t('home.partnerCodePlaceholder')}
-            className="font-mono text-base tracking-wider"
-          />
-        </Field>
+        {mode === 'words' ? (
+          <Field label={t('home.partnerWords')} error={wordsError}>
+            <Input
+              value={words}
+              onChange={(e) => setWords(e.currentTarget.value)}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder={t('home.partnerWordsPlaceholder')}
+              className="font-mono text-base"
+            />
+          </Field>
+        ) : (
+          <>
+            <Field label={t('home.partnerId')} error={idError}>
+              <Input
+                value={id}
+                onChange={(e) => setId(formatScrinId(e.currentTarget.value))}
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder={t('home.partnerIdPlaceholder')}
+                className="font-mono text-base tracking-wider"
+              />
+            </Field>
+            <Field label={t('home.partnerCode')} error={codeError}>
+              <Input
+                ref={codeRef}
+                value={code}
+                onChange={(e) => setCode(formatCode(e.currentTarget.value))}
+                autoComplete="one-time-code"
+                autoCapitalize="characters"
+                spellCheck={false}
+                placeholder={t('home.partnerCodePlaceholder')}
+                className="font-mono text-base tracking-wider"
+              />
+            </Field>
+          </>
+        )}
         <Button
           type="submit"
           size="md"

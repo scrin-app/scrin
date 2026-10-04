@@ -132,6 +132,10 @@ pub struct Config {
     #[arg(long, env = "SCRIN_PRESENCE_TTL", default_value_t = 60)]
     pub presence_ttl: u64,
 
+    /// Lifetime of a passphrase locator in seconds (`POST /v1/locator`).
+    #[arg(long, env = "SCRIN_LOCATOR_TTL", default_value_t = 600)]
+    pub locator_ttl: u64,
+
     /// Distinct reporters needed to block a device key.
     #[arg(long, env = "SCRIN_ABUSE_BLOCK_THRESHOLD", default_value_t = 3)]
     pub abuse_block_threshold: u64,

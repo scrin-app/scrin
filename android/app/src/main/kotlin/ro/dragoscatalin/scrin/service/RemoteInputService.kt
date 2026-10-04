@@ -47,6 +47,8 @@ class RemoteInputService : AccessibilityService() {
         private const val TAP_MS = 40L
         private const val LONG_PRESS_MS = 700L
         private const val MAX_GESTURE_MS = 10_000L
+        /** How long our own last write wins over a stale accessibility snapshot of the field. */
+        private const val SHADOW_MS = 1_500L
 
         fun isEnabled(ctx: Context): Boolean {
             val enabled = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
@@ -59,6 +61,12 @@ class RemoteInputService : AccessibilityService() {
             val s = instance ?: return false
             s.handle(event)
             return true
+        }
+
+        /** Debug builds only (device tests): a prepared multi-stroke gesture, e.g. a pinch. */
+        fun dispatchDebugGesture(g: GestureDescription): Boolean {
+            if (!ro.dragoscatalin.scrin.BuildConfig.DEBUG) return false
+            return instance?.dispatchGesture(g, null, null) ?: false
         }
     }
 
@@ -73,6 +81,10 @@ class RemoteInputService : AccessibilityService() {
     private var stroke: Stroke? = null
     private var cursorX = 0.5f
     private var cursorY = 0.5f
+
+    /** The last value written to a field: Compose updates its semantics tree with a lag. */
+    private class Shadow(val node: AccessibilityNodeInfo, val text: String, val at: Long)
+    private var shadow: Shadow? = null
 
     override fun onServiceConnected() {
         instance = this
@@ -110,7 +122,7 @@ class RemoteInputService : AccessibilityService() {
             }
             is RemoteInput.MouseButton -> button(e.button, e.down)
             is RemoteInput.Wheel -> scroll(e.dy)
-            is RemoteInput.Key -> if (e.down) key(e.hidUsage)
+            is RemoteInput.Key -> if (e.down) key(e.hidUsage, e.modifiers)
             is RemoteInput.Text -> setText(e.text)
         }
     }
@@ -172,7 +184,8 @@ class RemoteInputService : AccessibilityService() {
         gesture(p, 200, "scroll $dy")
     }
 
-    private fun key(hid: UInt) {
+    private fun key(hid: UInt, modifiers: UInt) {
+        HidText.char(hid, modifiers)?.let { return setText(it.toString()) }
         val action = when (hid) {
             HID_ESCAPE -> GLOBAL_ACTION_BACK
             HID_HOME, HID_WIN_LEFT -> GLOBAL_ACTION_HOME
@@ -185,16 +198,46 @@ class RemoteInputService : AccessibilityService() {
         performGlobalAction(action)
     }
 
-    private fun focused(): AccessibilityNodeInfo? = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+    /**
+     * The input-focused editable node: the active window first, then every interactive window
+     * (IME open). When the input focus sits on a container, its focused editable descendant wins.
+     */
+    private fun focused(): AccessibilityNodeInfo? {
+        val roots = listOfNotNull(rootInActiveWindow) + windows.mapNotNull { it.root }
+        val hits = roots.mapNotNull { it.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+        return hits.firstOrNull { it.isEditable } ?: hits.firstNotNullOfOrNull { editableDescendant(it) } ?: hits.firstOrNull()
+    }
+
+    private fun editableDescendant(n: AccessibilityNodeInfo, depth: Int = 0): AccessibilityNodeInfo? {
+        if (n.isEditable && n.isFocused) return n
+        if (depth > 8) return null
+        return (0 until n.childCount).firstNotNullOfOrNull { i -> n.getChild(i)?.let { editableDescendant(it, depth + 1) } }
+    }
 
     private fun setText(text: String) = editText { it + text }
 
     private fun editText(change: (String) -> String) {
-        val node = focused() ?: return
-        val args = Bundle().apply {
-            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, change(node.text?.toString().orEmpty()))
+        val node = focused()
+        if (node == null) {
+            Log.w(TAG, "text: no input-focused field")
+            return
         }
-        node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        // Only lengths are logged: the field may hold a password.
+        node.refresh()
+        val now = SystemClock.uptimeMillis()
+        val reported = if (node.isShowingHintText) "" else node.text?.toString().orEmpty()
+        val before = shadow?.takeIf { it.node == node && now - it.at < SHADOW_MS }?.text ?: reported
+        val after = change(before)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, after)
+        }
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        shadow = if (ok) Shadow(node, after, now) else null
+        Log.i(TAG, "text: set ${before.length}->${after.length} chars ok=$ok")
+        if (!ok) {
+            val actions = node.actionList.joinToString(",") { it.id.toString() }
+            Log.w(TAG, "text: SET_TEXT refused by ${node.className} editable=${node.isEditable} focused=${node.isFocused} actions=[$actions]")
+        }
     }
 
     private fun imeEnter() {

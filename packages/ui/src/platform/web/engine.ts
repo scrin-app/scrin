@@ -128,7 +128,7 @@ export function createWebEngine(opts: WebEngineOptions): SessionEngine {
     sessionId: string,
     id: string,
     code: string,
-    token: { cancelled: boolean },
+    token: { cancelled: boolean; accepted: boolean },
   ) => {
     emit({ type: 'stage', sessionId, stage: 'locating' });
     const rt = await loadRuntime();
@@ -188,6 +188,8 @@ export function createWebEngine(opts: WebEngineOptions): SessionEngine {
         onMessage: (m: Incoming) => {
           if (m.type === 'sessionAccept') {
             accepted = true;
+            token.accepted = true;
+            if (live) live.granted = m.granted;
             const displays: RemoteDisplay[] = m.displays.map((d) => ({
               id: d.id,
               name: d.name,
@@ -207,11 +209,19 @@ export function createWebEngine(opts: WebEngineOptions): SessionEngine {
             emit({ type: 'chat', sessionId, from: 'remote', text: m.text, at: Date.now() });
           } else if (m.type === 'videoConfig' && live) {
             live.videoConfig = m;
+          } else if (m.type === 'permissionsUpdate' && live) {
+            live.granted = m.granted;
           }
           if (live) for (const l of live.onMessage) l(m);
         },
         onVideo: (frameId, keyframe, data) => {
           if (live) for (const l of live.onVideo) l(frameId, keyframe, data);
+        },
+        onAudio: (frameId, data) => {
+          if (live) for (const l of live.onAudio) l(frameId, data);
+        },
+        onClipboard: (m) => {
+          if (live) for (const l of live.onClipboard) l(m);
         },
         onClosed: () => {
           unregisterSession(sessionId);
@@ -223,8 +233,11 @@ export function createWebEngine(opts: WebEngineOptions): SessionEngine {
       id: sessionId,
       session,
       videoConfig: null,
+      granted: [],
       onMessage: new Set(),
       onVideo: new Set(),
+      onAudio: new Set(),
+      onClipboard: new Set(),
       emit,
     };
     registerSession(live);
@@ -249,14 +262,18 @@ export function createWebEngine(opts: WebEngineOptions): SessionEngine {
     async connect(id: string, code: string): Promise<ConnectHandle> {
       seq += 1;
       const sessionId = `w${seq}-${id}`;
-      const token = { cancelled: false };
+      const token = { cancelled: false, accepted: false };
       await Promise.resolve();
       void run(sessionId, id.replace(/\D/g, ''), code, token).catch(() => {
         emit({ type: 'error', sessionId, error: 'network-blocked' });
       });
       return {
         sessionId,
+        // Aborts the attempt only. Once the host accepted, the connect screen
+        // unmounting (navigation to the session) must not end the session;
+        // `endSession` does that (same contract as the mock engine).
         cancel: () => {
+          if (token.accepted) return;
           token.cancelled = true;
           getSession(sessionId)?.session.end();
         },

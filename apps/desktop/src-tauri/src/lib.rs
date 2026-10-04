@@ -60,6 +60,24 @@ async fn scrin_regenerate_code(st: State<'_, AppState>) -> Res<serde_json::Value
     ok(st.bridge.call_async(Command::RegenerateCode).await?)
 }
 
+/// D24: show a five-word passphrase in the UI language (`lang` = `en`/`ro`).
+#[tauri::command]
+async fn scrin_enable_phrase(
+    st: State<'_, AppState>,
+    lang: Option<String>,
+) -> Res<serde_json::Value> {
+    let lang = lang.unwrap_or_default();
+    if lang.len() > 16 {
+        return Err("input too long".into());
+    }
+    ok(st.bridge.call_async(Command::EnablePhrase { lang }).await?)
+}
+
+#[tauri::command]
+async fn scrin_disable_phrase(st: State<'_, AppState>) -> Res<serde_json::Value> {
+    ok(st.bridge.call_async(Command::DisablePhrase).await?)
+}
+
 #[tauri::command]
 async fn scrin_connect(
     st: State<'_, AppState>,
@@ -508,6 +526,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scrin_status,
             scrin_regenerate_code,
+            scrin_enable_phrase,
+            scrin_disable_phrase,
             scrin_connect,
             scrin_confirm_sas,
             scrin_accept,
@@ -533,7 +553,9 @@ pub fn run() {
             return;
         }
     };
-    if std::env::args().any(|a| a == "--hidden")
+    // `--agent`: started by scrin-service into the console session; it lives
+    // in the tray like an autostart.
+    if std::env::args().any(|a| a == "--hidden" || a == "--agent")
         && let Some(w) = app.get_webview_window("main")
     {
         let _ = w.hide();

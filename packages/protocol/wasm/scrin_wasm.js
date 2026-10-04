@@ -264,7 +264,7 @@ export class Pairing {
 if (Symbol.dispose) Pairing.prototype[Symbol.dispose] = Pairing.prototype.free;
 
 /**
- * FEC reassembler for video shards (`scrin_media::fec`).
+ * FEC reassembler for video and audio shards (`scrin_media::fec`).
  */
 export class Reassembler {
     __destroy_into_raw() {
@@ -276,6 +276,23 @@ export class Reassembler {
     free() {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_reassembler_free(ptr, 0);
+    }
+    /**
+     * Audio counters, same layout as `stats`.
+     * @returns {Float64Array}
+     */
+    audioStats() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.reassembler_audioStats(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export2(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
     }
     constructor() {
         const ret = wasm.reassembler_new();
@@ -295,7 +312,7 @@ export class Reassembler {
         return ret === 0 ? undefined : VideoFrame.__wrap(ret);
     }
     /**
-     * `[completed, recovered, lost, late, duplicate, invalid]` counters.
+     * Video `[completed, recovered, lost, late, duplicate, invalid]` counters.
      * @returns {Float64Array}
      */
     stats() {
@@ -315,7 +332,8 @@ export class Reassembler {
 if (Symbol.dispose) Reassembler.prototype[Symbol.dispose] = Reassembler.prototype.free;
 
 /**
- * One reassembled video access unit (H.264 Annex B).
+ * One reassembled media frame: an H.264 Annex B access unit, or one Opus
+ * packet when `audio` is true.
  */
 export class VideoFrame {
     static __wrap(ptr) {
@@ -333,6 +351,14 @@ export class VideoFrame {
     free() {
         const ptr = this.__destroy_into_raw();
         wasm.__wbg_videoframe_free(ptr, 0);
+    }
+    /**
+     * The frame is an Opus packet (media kind 1), not video.
+     * @returns {boolean}
+     */
+    get audio() {
+        const ret = wasm.videoframe_audio(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * @returns {number}

@@ -14,7 +14,8 @@ use scrin_crypto::trust::{Profile, TrustStore, TrustedPeer};
 use scrin_net::datagram::{max_datagram_size, recv_datagram, send_datagram};
 use scrin_net::framing::{accept_stream, open_stream, read_frame, write_frame};
 use scrin_net::handshake::{
-    HostCode, controller_auth_trusted, controller_pair, host_auth_trusted, host_pair,
+    HostCode, controller_auth_trusted, controller_pair, controller_pair_phrase, host_auth_trusted,
+    host_pair,
 };
 use scrin_net::{
     ALPN, Connection, EndpointAddr, NetConfig, NetEndpoint, NetError, StreamKind, TransportAddr,
@@ -144,6 +145,89 @@ fn trust_of(peer: &Identity, expires_at: Option<u64>) -> TrustStore {
         expires_at,
     });
     t
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dictated_phrase_pairs_once_and_leaves_the_code_alone() {
+    use scrin_crypto::phrase::{Lang, Passphrase, parse};
+
+    let (_, host) = bind(90).await;
+    let (_, ctl) = bind(91).await;
+    let otc = OneTimeCode::generate().expect("rng");
+    let typed_code = otc.as_str().to_owned();
+    let phrase = Passphrase::generate(123_456).expect("rng");
+    let slot = HostCode::new(otc);
+    slot.set_phrase(phrase.pake_password());
+    assert!(slot.has_phrase());
+
+    // Host shows Romanian words; the controller types them without diacritics.
+    let typed = scrin_crypto::phrase::fold(&phrase.display(Lang::Ro));
+    let parsed = parse(&typed).expect("parse");
+    assert_eq!(parsed.locator, 123_456);
+
+    let (c, h) = connect(&ctl, &host).await;
+    let (hr, cr) = tokio::time::timeout(T, async {
+        tokio::join!(
+            host_pair(&h, host.device_id(), &slot),
+            controller_pair_phrase(&c, ctl.device_id(), &parsed.password)
+        )
+    })
+    .await
+    .expect("pair in time");
+    let (hr, cr) = (hr.expect("host pairs"), cr.expect("controller pairs"));
+    assert_eq!(hr.sas, cr.sas);
+    assert!(!slot.has_phrase());
+    assert!(slot.is_consumed(), "a used phrase asks the owner to rotate");
+
+    // The phrase is single-use…
+    let (c2, h2) = connect(&ctl, &host).await;
+    let (hr, cr) = tokio::time::timeout(T, async {
+        tokio::join!(
+            host_pair(&h2, host.device_id(), &slot),
+            controller_pair_phrase(&c2, ctl.device_id(), &parsed.password)
+        )
+    })
+    .await
+    .expect("refuse in time");
+    assert!(matches!(hr, Err(NetError::CodeConsumed)), "{hr:?}");
+    assert!(matches!(cr, Err(NetError::CodeConsumed)), "{cr:?}");
+
+    // …and the code is a separate secret: a phrase password never opens it.
+    let (c3, h3) = connect(&ctl, &host).await;
+    let (hr, cr) = tokio::time::timeout(T, async {
+        tokio::join!(
+            host_pair(&h3, host.device_id(), &slot),
+            controller_pair(&c3, ctl.device_id(), &typed_code)
+        )
+    })
+    .await
+    .expect("pair in time");
+    assert!(hr.is_ok() && cr.is_ok(), "{hr:?} {cr:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wrong_phrase_fails_and_burns_the_phrase() {
+    use scrin_crypto::phrase::{Lang, Passphrase, parse};
+
+    let (_, host) = bind(92).await;
+    let (_, ctl) = bind(93).await;
+    let slot = HostCode::new(OneTimeCode::generate().expect("rng"));
+    let real = Passphrase::generate(9).expect("rng");
+    slot.set_phrase(real.pake_password());
+    let guess = parse(&Passphrase::generate(9).expect("rng").display(Lang::En)).expect("parse");
+
+    let (c, h) = connect(&ctl, &host).await;
+    let (hr, cr) = tokio::time::timeout(T, async {
+        tokio::join!(
+            host_pair(&h, host.device_id(), &slot),
+            controller_pair_phrase(&c, ctl.device_id(), &guess.password)
+        )
+    })
+    .await
+    .expect("fail in time");
+    assert!(matches!(hr, Err(NetError::PairingFailed)), "{hr:?}");
+    assert!(matches!(cr, Err(NetError::PairingFailed)), "{cr:?}");
+    assert!(!slot.has_phrase());
 }
 
 #[tokio::test(flavor = "multi_thread")]

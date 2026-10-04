@@ -251,6 +251,87 @@ async fn wrong_code_is_reported_to_the_server() {
     srv.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dictated_passphrase_connects_and_is_single_use() {
+    let srv = server().await;
+    let (host, mut host_ev) = engine("host-p", &srv, SyntheticBackend::new(160, 90), false).await;
+    let (ctl, mut ctl_ev) = engine("ctl-p", &srv, SyntheticBackend::default(), false).await;
+    registered(&host, &mut host_ev).await;
+    registered(&ctl, &mut ctl_ev).await;
+
+    host.call(Command::EnablePhrase {
+        lang: "ro-RO".into(),
+    })
+    .await
+    .expect("enable");
+    let phrase = wait_for(&mut host_ev, |e| match e {
+        Event::Status(s) if !s.phrase.is_empty() => Some(s.phrase.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(phrase.split(' ').count(), 5);
+    assert!(metric(&srv, "scrin_locator_allocations_total").await >= 1);
+
+    // Dictated over the phone: no diacritics, upper case, dashes.
+    let typed = scrin_crypto::phrase::fold(&phrase)
+        .to_uppercase()
+        .replace(' ', "-");
+    let sess = match ctl
+        .call(Command::Connect {
+            target: typed.clone(),
+            code: String::new(),
+            requested: None,
+        })
+        .await
+        .expect("connect")
+    {
+        Reply::Session(s) => s,
+        other => panic!("{other:?}"),
+    };
+    let h_sess = wait_for(&mut host_ev, |e| match e {
+        Event::IncomingRequest { session, kind, .. } => {
+            assert_eq!(kind, "anonymous");
+            Some(session.clone())
+        }
+        _ => None,
+    })
+    .await;
+    assert!(metric(&srv, "scrin_locator_lookups_total").await >= 1);
+    ctl.call(Command::ConfirmSas {
+        session: sess.clone(),
+        matches: true,
+    })
+    .await
+    .expect("sas");
+    host.call(Command::Accept {
+        session: h_sess,
+        permissions: vec!["view".into()],
+    })
+    .await
+    .expect("accept");
+    wait_for(&mut ctl_ev, |e| match e {
+        Event::VideoFrame { frame, .. } => Some((frame.width, frame.height)),
+        _ => None,
+    })
+    .await;
+
+    // Used once: the host shows new secret words on the same locator.
+    let next = host.status().await.expect("status").phrase;
+    assert_ne!(next, phrase);
+    let (old, new): (Vec<&str>, Vec<&str>) =
+        (phrase.split(' ').collect(), next.split(' ').collect());
+    assert_eq!(old[..2], new[..2], "same locator words");
+
+    ctl.call(Command::EndSession { session: sess })
+        .await
+        .expect("end");
+    host.call(Command::DisablePhrase).await.expect("disable");
+    assert_eq!(host.status().await.expect("status").phrase, "");
+    ctl.shutdown().await;
+    host.shutdown().await;
+    srv.shutdown().await;
+}
+
 fn hex32(s: &str) -> [u8; 32] {
     data_encoding::HEXLOWER_PERMISSIVE
         .decode(s.as_bytes())

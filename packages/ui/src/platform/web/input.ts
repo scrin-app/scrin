@@ -41,6 +41,9 @@ const preventDefault = (e: Event) => {
   e.preventDefault();
 };
 
+// Touch pointers are handled by the gesture recognizer (touch.ts).
+const isTouch = (e: PointerEvent) => e.pointerType === 'touch';
+
 /** Position inside a `contain`-fitted video of `vw`×`vh` drawn in `rect`, in [0,1]. */
 export function normalisePoint(
   x: number,
@@ -70,6 +73,12 @@ export interface InputOptions {
   displayId: () => number;
   /** Current video size for letterbox-aware mapping. */
   videoSize: () => { width: number; height: number };
+  /**
+   * When true, Ctrl/Cmd+V is still forwarded but not `preventDefault`ed, so
+   * the browser fires a `paste` event the clipboard sync can read without a
+   * permission prompt.
+   */
+  allowPaste?: () => boolean;
 }
 
 /** Starts capturing; returns a function that stops and releases held keys. */
@@ -81,6 +90,7 @@ export function attachInput(el: HTMLElement, send: InputSink, opts: InputOptions
   let wheelY = 0;
 
   const onPointerMove = (e: PointerEvent) => {
+    if (isTouch(e)) return;
     if (locked()) {
       if (e.movementX || e.movementY) {
         send({ type: 'mouseRelative', dx: Math.round(e.movementX), dy: Math.round(e.movementY) });
@@ -92,6 +102,7 @@ export function attachInput(el: HTMLElement, send: InputSink, opts: InputOptions
     send({ type: 'mouseAbsolute', displayId: opts.displayId(), x: p.x, y: p.y });
   };
   const onPointerButton = (e: PointerEvent) => {
+    if (isTouch(e)) return;
     const button = BUTTONS[e.button];
     if (!button) return;
     const down = e.type === 'pointerdown';
@@ -120,7 +131,9 @@ export function attachInput(el: HTMLElement, send: InputSink, opts: InputOptions
     if (usage === null) return;
     const down = e.type === 'keydown';
     // Leave the browser's own escape hatch alone while pointer-locked.
-    if (!(e.code === 'Escape' && locked())) e.preventDefault();
+    const escape = e.code === 'Escape' && locked();
+    const paste = e.code === 'KeyV' && (e.ctrlKey || e.metaKey) && opts.allowPaste?.() === true;
+    if (!escape && !paste) e.preventDefault();
     if (down) held.set(e.code, usage);
     else held.delete(e.code);
     send({ type: 'keyEvent', hidUsage: usage, down, modifiers: modifiers(e), repeat: e.repeat });

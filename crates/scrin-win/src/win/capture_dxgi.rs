@@ -434,6 +434,9 @@ impl DxgiCapture {
 
     fn acquire(&mut self, timeout: Duration) -> Result<Option<(bool, Option<CursorInfo>)>> {
         if self.dupl.is_none() {
+            // Lock screen / elevation prompt: attach to that desktop first
+            // (works when started by scrin-service; no-op otherwise).
+            super::desktop::follow_input_desktop();
             match self.duplicate() {
                 Ok(()) => {}
                 Err(Error::Os { code, .. })
