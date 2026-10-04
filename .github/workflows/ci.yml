@@ -1,0 +1,229 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  TURBO_TELEMETRY_DISABLED: "1"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.f.outputs.rust }}
+      # a lane runs only when its paths changed AND its inputs exist
+      js: ${{ steps.f.outputs.js == 'true' && steps.has.outputs.js == 'true' }}
+      proto: ${{ steps.f.outputs.proto == 'true' && steps.has.outputs.proto == 'true' }}
+      android: ${{ steps.f.outputs.android == 'true' && steps.has.outputs.android == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: has
+        shell: bash
+        run: |
+          [ -f pnpm-lock.yaml ] && echo "js=true" >> "$GITHUB_OUTPUT" || echo "js=false" >> "$GITHUB_OUTPUT"
+          [ -f buf.yaml ] && echo "proto=true" >> "$GITHUB_OUTPUT" || echo "proto=false" >> "$GITHUB_OUTPUT"
+          [ -f android/gradlew ] && echo "android=true" >> "$GITHUB_OUTPUT" || echo "android=false" >> "$GITHUB_OUTPUT"
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: f
+        with:
+          filters: |
+            shared: &shared
+              - '.github/workflows/**'
+              - 'scripts/**'
+            rust:
+              - *shared
+              - 'crates/**'
+              - 'proto/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'rustfmt.toml'
+              - 'deny.toml'
+            js:
+              - *shared
+              - 'apps/**'
+              - 'packages/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'turbo.json'
+              - 'tsconfig*.json'
+              - 'eslint.config.*'
+              - '.oxlintrc.json'
+            proto:
+              - *shared
+              - 'proto/**'
+              - 'buf.yaml'
+              - 'buf.gen.yaml'
+            android:
+              - *shared
+              - 'android/**'
+              - 'crates/**'
+              - 'proto/**'
+
+  invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get install -y --no-install-recommends ripgrep
+      - name: invariants + tracker + mutation tests
+        shell: pwsh
+        run: |
+          ./scripts/check-invariants.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./scripts/check-tracker.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./scripts/test-invariants.ps1
+          exit $LASTEXITCODE
+
+  commits:
+    # Conventional Commits header + DCO sign-off on every commit of the PR
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: 24 }
+      - shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          fail=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            git log -1 --format=%B "$c" > /tmp/msg
+            node scripts/check-commit-msg.mjs /tmp/msg || { echo "::error::commit $c"; fail=1; }
+          done
+          exit $fail
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # toolchain version comes from rust-toolchain.toml
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master 2026-10
+        with: { toolchain: "1.99.0", components: "clippy,rustfmt" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with: { key: "${{ matrix.os }}" }
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  deny:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories bans licenses sources
+
+  js:
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: ".nvmrc", cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm audit --audit-level high
+
+  proto:
+    needs: changes
+    if: needs.changes.outputs.proto == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+        with:
+          setup_only: false
+          lint: true
+          format: true
+          breaking: ${{ github.event_name == 'pull_request' }}
+          breaking_against: "${{ github.event.repository.clone_url }}#branch=main"
+          push: false
+          pr_comment: ${{ github.event_name == 'pull_request' }}
+
+  android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with: { distribution: temurin, java-version: 21 }
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master 2026-10
+        with: { toolchain: "1.99.0", targets: "aarch64-linux-android,x86_64-linux-android" }
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
+        with: { tool: cargo-ndk }
+      - run: sdkmanager "ndk;28.2.13676358"
+      - working-directory: android
+        run: ./gradlew --console=plain lint testDebugUnitTest
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      # The CLI directly (the gitleaks-action needs a licence key for orgs).
+      - shell: bash
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz | tar xz gitleaks
+          ./gitleaks git --no-banner --redact --exit-code 1 --config .gitleaks.toml .
+
+  gate:
+    # The single required status check for branch protection. Skipped jobs
+    # (path filters, absent inputs) count as success; failed/cancelled do not.
+    if: always()
+    needs: [changes, invariants, commits, rust, deny, js, proto, android, gitleaks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | grep -qE '"result": "(failure|cancelled)"' && { echo "$NEEDS"; echo "::error::a required job failed"; exit 1; } || echo "all required jobs passed or were skipped"

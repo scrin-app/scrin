@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package scrin.v1;
+
+// SPAKE2 message over the one-time code, bound to both endpoint ids and the ALPN.
+message PairStart {
+  bytes spake_msg = 1;
+}
+
+// Key-confirmation MAC proving both sides derived the same SPAKE2 key.
+message PairConfirm {
+  bytes tag = 1;
+}
+
+// Unattended access by a trusted controller key: Ed25519 signature over the
+// session transcript and timestamp.
+message AuthTrusted {
+  bytes signature = 1;
+  // Unix time in milliseconds, checked against a small skew window.
+  int64 timestamp_unix_ms = 2;
+}

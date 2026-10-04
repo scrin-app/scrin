@@ -1,0 +1,16 @@
+[package]
+name = "scrin-session"
+description = "Pure session state machine and permission model for scrin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1.11.0"
+
+[lints]
+workspace = true

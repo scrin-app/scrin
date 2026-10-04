@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package scrin.v1;
+
+// Video codecs, in negotiation preference order AV1 > HEVC > H.264.
+enum Codec {
+  CODEC_UNSPECIFIED = 0;
+  CODEC_H264 = 1;
+  CODEC_HEVC = 2;
+  CODEC_AV1 = 3;
+}
+
+// Audio codecs.
+enum AudioCodec {
+  AUDIO_CODEC_UNSPECIFIED = 0;
+  AUDIO_CODEC_OPUS = 1;
+}
+
+// Operating system / runtime of the peer.
+enum Platform {
+  PLATFORM_UNSPECIFIED = 0;
+  PLATFORM_WINDOWS = 1;
+  PLATFORM_MACOS = 2;
+  PLATFORM_LINUX = 3;
+  PLATFORM_ANDROID = 4;
+  PLATFORM_ANDROID_TV = 5;
+  PLATFORM_IOS = 6;
+  PLATFORM_WEB = 7;
+}
+
+// First message on the control stream, sent by both sides.
+message Hello {
+  // Protocol version this peer speaks natively.
+  uint32 protocol_version = 1;
+  // Oldest protocol version this peer still accepts.
+  uint32 min_supported_version = 2;
+  // Application version (SemVer string), informational only.
+  string app_version = 3;
+  Platform platform = 4;
+  Capabilities capabilities = 5;
+  // Human-readable device name shown in the pre-accept interstitial.
+  string device_name = 6;
+}
+
+// What this peer can do. Absent lists mean "not supported".
+message Capabilities {
+  // Codecs this peer can decode (client role).
+  repeated CodecCapability decoders = 1;
+  // Codecs this peer can encode (host role).
+  repeated CodecCapability encoders = 2;
+  AudioCapability audio = 3;
+  // Clipboard MIME types supported, e.g. "text/plain", "image/png".
+  repeated string clipboard_formats = 4;
+  bool file_transfer = 5;
+  bool gamepad = 6;
+  bool multi_monitor = 7;
+  bool relative_mouse = 8;
+  bool touch = 9;
+  bool chat = 10;
+  // Bitset reserved for small future features; unknown bits must be ignored.
+  uint64 feature_flags = 11;
+}
+
+// Limits of one encoder or decoder.
+message CodecCapability {
+  Codec codec = 1;
+  uint32 max_width = 2;
+  uint32 max_height = 3;
+  uint32 max_fps = 4;
+  // Supports 4:4:4 chroma (text-sharp desktop mode).
+  bool supports_444 = 5;
+  bool supports_hdr = 6;
+  // Hardware accelerated (vs software fallback).
+  bool hardware = 7;
+}
+
+// Audio playback / capture capabilities.
+message AudioCapability {
+  repeated AudioCodec codecs = 1;
+  uint32 max_channels = 2;
+  uint32 sample_rate_hz = 3;
+  // Can capture a microphone and send it to the other side.
+  bool microphone = 4;
+}

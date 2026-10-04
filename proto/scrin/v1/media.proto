@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package scrin.v1;
+
+import "scrin/v1/hello.proto";
+
+// Chroma subsampling of the encoded video.
+enum ChromaSubsampling {
+  CHROMA_SUBSAMPLING_UNSPECIFIED = 0;
+  CHROMA_SUBSAMPLING_420 = 1;
+  CHROMA_SUBSAMPLING_444 = 2;
+}
+
+// Host announces (or changes) the encoding of a video stream. Media datagrams
+// carry the stream_id from here in their 16-byte header.
+message VideoConfig {
+  uint32 stream_id = 1;
+  Codec codec = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+  uint32 fps = 5;
+  uint32 bitrate_bps = 6;
+  ChromaSubsampling chroma = 7;
+  bool hdr = 8;
+  uint32 display_id = 9;
+  // Out-of-band codec configuration (e.g. avcC / hvcC / av1C), may be empty.
+  bytes codec_config = 10;
+}
+
+// Client lost a frame it cannot recover with FEC; host sends a keyframe or intra refresh.
+message KeyframeRequest {
+  uint32 stream_id = 1;
+  // Last frame the client decoded correctly.
+  uint32 last_good_frame_id = 2;
+}
+
+// Arrival of one media datagram, for delay-based bandwidth estimation.
+message DatagramArrival {
+  uint32 frame_id = 1;
+  uint32 shard_index = 2;
+  // Receive time in microseconds relative to BitrateFeedback.base_receive_us.
+  uint32 receive_delta_us = 3;
+  uint32 size_bytes = 4;
+}
+
+// Periodic receiver report driving the host's encoder bitrate (GCC-style trendline).
+message BitrateFeedback {
+  uint32 stream_id = 1;
+  // Receiver monotonic clock in microseconds for the first arrival in this report.
+  uint64 base_receive_us = 2;
+  repeated DatagramArrival arrivals = 3;
+  uint32 datagrams_received = 4;
+  uint32 datagrams_lost = 5;
+  uint32 shards_recovered_by_fec = 6;
+  uint32 frames_dropped = 7;
+  // Receiver's own estimate, 0 if none.
+  uint32 estimated_bps = 8;
+}
+
+// NTP-style clock and RTT probe: t1 sender transmit time.
+message Ping {
+  uint64 seq = 1;
+  uint64 t1_us = 2;
+}
+
+// Reply to Ping: echo of t1, t2 = receive time, t3 = transmit time (receiver clock).
+// The pinger records t4 on arrival: rtt = (t4 - t1) - (t3 - t2).
+message Pong {
+  uint64 seq = 1;
+  uint64 t1_us = 2;
+  uint64 t2_us = 3;
+  uint64 t3_us = 4;
+}
+
+// Periodic session statistics for the overlay and telemetry.
+message Stats {
+  uint32 stream_id = 1;
+  uint32 rtt_us = 2;
+  uint32 jitter_us = 3;
+  uint32 bitrate_bps = 4;
+  // Hundredths of a frame per second (6000 = 60.00 fps).
+  uint32 fps_received_centi = 5;
+  uint32 fps_rendered_centi = 6;
+  uint32 encode_us = 7;
+  uint32 decode_us = 8;
+  uint32 render_us = 9;
+  // Loss in parts per thousand before FEC.
+  uint32 loss_permille = 10;
+  Codec codec = 11;
+  uint32 width = 12;
+  uint32 height = 13;
+}
+
+// Pixel format of a cursor image.
+enum CursorImageFormat {
+  CURSOR_IMAGE_FORMAT_UNSPECIFIED = 0;
+  CURSOR_IMAGE_FORMAT_PNG = 1;
+  // Straight (non-premultiplied) RGBA8, width*height*4 bytes.
+  CURSOR_IMAGE_FORMAT_RGBA = 2;
+}
+
+// New cursor image; the client caches it by id.
+message CursorShape {
+  uint64 id = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  uint32 hotspot_x = 4;
+  uint32 hotspot_y = 5;
+  CursorImageFormat format = 6;
+  bytes data = 7;
+}
+
+// Cursor moved or changed to a cached shape.
+message CursorPosition {
+  uint64 shape_id = 1;
+  uint32 display_id = 2;
+  // Normalised [0,1] within the display.
+  float x = 3;
+  float y = 4;
+  bool visible = 5;
+}

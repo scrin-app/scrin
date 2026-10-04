@@ -1,0 +1,45 @@
+{
+  "name": "scrin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "turbo run build",
+    "lint": "pnpm lint:ox && pnpm lint:es",
+    "lint:ox": "oxlint --type-aware --deny-warnings apps packages scripts",
+    "lint:es": "eslint apps packages scripts eslint.config.mjs vitest.config.mjs --max-warnings 0",
+    "typecheck": "node ./node_modules/@typescript/native/bin/tsc -b",
+    "test": "vitest run",
+    "format": "prettier --cache --write \"{apps,packages}/**/*.{ts,tsx,js,mjs,json,css,html}\" package.json pnpm-workspace.yaml turbo.json \"tsconfig*.json\" knip.json size-budget.json eslint.config.mjs vitest.config.mjs .oxlintrc.json",
+    "format:check": "prettier --cache --check \"{apps,packages}/**/*.{ts,tsx,js,mjs,json,css,html}\" package.json pnpm-workspace.yaml turbo.json \"tsconfig*.json\" knip.json size-budget.json eslint.config.mjs vitest.config.mjs .oxlintrc.json",
+    "knip": "knip",
+    "size": "pnpm --filter web size",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm size",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "catalog:",
+    "@typescript/native": "catalog:",
+    "eslint": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "eslint-plugin-react-hooks": "catalog:",
+    "globals": "catalog:",
+    "knip": "catalog:",
+    "lefthook": "2.1.16",
+    "oxlint": "catalog:",
+    "oxlint-tsgolint": "catalog:",
+    "prettier": "catalog:",
+    "prettier-plugin-tailwindcss": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
+  }
+}

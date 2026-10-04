@@ -1,0 +1,8 @@
+{
+  "$comment": "Gzip budgets in bytes for apps/web, enforced by apps/web/scripts/check-size.mjs after `pnpm --filter web build`.",
+  "web": {
+    "initialJsGzip": 153600,
+    "initialCssGzip": 25600,
+    "largestRouteChunkGzip": 61440
+  }
+}

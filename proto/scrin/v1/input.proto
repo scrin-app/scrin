@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package scrin.v1;
+
+// Keyboard key by physical position.
+// modifiers bitmask: 1 shift, 2 ctrl, 4 alt, 8 meta, 16 caps lock, 32 num lock, 64 altgr.
+message KeyEvent {
+  // USB HID usage (page 0x07 keyboard; page in high 16 bits when not 0x07).
+  uint32 hid_usage = 1;
+  bool down = 2;
+  uint32 modifiers = 3;
+  // Translate mode: the character to type instead of the physical key.
+  optional string text = 4;
+  bool repeat = 5;
+}
+
+// Pointer position normalised to [0,1] within a display.
+message AbsolutePosition {
+  uint32 display_id = 1;
+  float x = 2;
+  float y = 3;
+}
+
+// Relative motion in device units (games, pointer lock).
+message RelativeMotion {
+  int32 dx = 1;
+  int32 dy = 2;
+}
+
+// Mouse movement, absolute or relative.
+message MouseMove {
+  oneof motion {
+    AbsolutePosition absolute = 1;
+    RelativeMotion relative = 2;
+  }
+}
+
+// Mouse button identifiers.
+enum MouseButtonKind {
+  MOUSE_BUTTON_KIND_UNSPECIFIED = 0;
+  MOUSE_BUTTON_KIND_LEFT = 1;
+  MOUSE_BUTTON_KIND_RIGHT = 2;
+  MOUSE_BUTTON_KIND_MIDDLE = 3;
+  MOUSE_BUTTON_KIND_BACK = 4;
+  MOUSE_BUTTON_KIND_FORWARD = 5;
+}
+
+// Mouse button press or release.
+message MouseButton {
+  MouseButtonKind button = 1;
+  bool down = 2;
+}
+
+// High-resolution wheel: 120 units = one notch (WHEEL_DELTA).
+message MouseWheel {
+  int32 delta_x = 1;
+  int32 delta_y = 2;
+}
+
+// Touch contact lifecycle.
+enum TouchPhase {
+  TOUCH_PHASE_UNSPECIFIED = 0;
+  TOUCH_PHASE_DOWN = 1;
+  TOUCH_PHASE_MOVE = 2;
+  TOUCH_PHASE_UP = 3;
+  TOUCH_PHASE_CANCEL = 4;
+}
+
+// One contact point, normalised to [0,1] within a display.
+message TouchPoint {
+  uint32 id = 1;
+  TouchPhase phase = 2;
+  uint32 display_id = 3;
+  float x = 4;
+  float y = 5;
+  // [0,1]; 0 if unknown.
+  float pressure = 6;
+}
+
+// Changed touch points of one frame.
+message TouchEvent {
+  repeated TouchPoint points = 1;
+}
+
+// Full state of one gamepad (XInput layout).
+message GamepadState {
+  uint32 pad_index = 1;
+  bool connected = 2;
+  // XInput wButtons bitmask.
+  uint32 buttons = 3;
+  // Sticks in [-32768, 32767].
+  sint32 left_x = 4;
+  sint32 left_y = 5;
+  sint32 right_x = 6;
+  sint32 right_y = 7;
+  // Triggers in [0, 255].
+  uint32 left_trigger = 8;
+  uint32 right_trigger = 9;
+}

@@ -1,0 +1,13 @@
+[package]
+name = "scrin-wasm"
+description = "wasm-bindgen bindings of the scrin core for the browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

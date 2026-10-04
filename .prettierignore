@@ -1,0 +1,6 @@
+**/dist
+**/routeTree.gen.ts
+pnpm-lock.yaml
+target
+crates
+docs

@@ -1,0 +1,185 @@
+/*
+ * scrin design tokens — Tailwind v4 CSS-first.
+ *
+ * Apps import this after `@import 'tailwindcss'`. The ThemeProvider writes the
+ * `--scrin-*` custom properties on <html> at runtime; `@theme inline` maps
+ * them into Tailwind's namespaces, so `bg-surface` follows the live theme with
+ * no class swapping and no React re-render.
+ */
+
+@custom-variant dark (&:where([data-mode='dark'], [data-mode='dark'] *));
+
+@theme inline {
+  --color-bg: var(--scrin-bg);
+  --color-surface: var(--scrin-surface);
+  --color-surface-2: var(--scrin-surface-2);
+  --color-fg: var(--scrin-fg);
+  --color-muted: var(--scrin-muted);
+  --color-outline: var(--scrin-outline);
+  --color-accent: var(--scrin-accent);
+  --color-accent-fg: var(--scrin-accent-fg);
+  --color-success: var(--scrin-success);
+  --color-warning: var(--scrin-warning);
+  --color-danger: var(--scrin-danger);
+
+  --font-sans:
+    'Inter Variable', 'Segoe UI Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono:
+    'JetBrains Mono', 'Cascadia Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  --radius-sm: calc(6px * var(--scrin-density));
+  --radius-md: calc(10px * var(--scrin-density));
+  --radius-lg: calc(14px * var(--scrin-density));
+  --radius-xl: calc(20px * var(--scrin-density));
+
+  /* Density scales the control heights and paddings together. */
+  --spacing-ctl-sm: calc(2rem * var(--scrin-density));
+  --spacing-ctl: calc(2.5rem * var(--scrin-density));
+  --spacing-ctl-lg: calc(3rem * var(--scrin-density));
+  --spacing-pad: calc(1rem * var(--scrin-density));
+  --spacing-gap: calc(0.75rem * var(--scrin-density));
+
+  --ease-scrin: cubic-bezier(0.22, 1, 0.36, 1);
+  --animate-spin: spin calc(0.8s / max(var(--scrin-motion), 0.25)) linear infinite;
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+  --animate-pulse-soft: pulse-soft 2s ease-in-out infinite;
+
+  --breakpoint-3xl: 120rem;
+  --breakpoint-4xl: 160rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes pulse-soft {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* Defaults, so the first paint before React mounts is already themed. */
+:root {
+  --scrin-density: 1;
+  --scrin-motion: 1;
+  --scrin-dur-fast: calc(120ms * var(--scrin-motion));
+  --scrin-dur: calc(220ms * var(--scrin-motion));
+  --scrin-dur-slow: calc(420ms * var(--scrin-motion));
+  --scrin-bg: oklch(0.985 0.007 264);
+  --scrin-surface: oklch(1 0 264);
+  --scrin-surface-2: oklch(0.955 0.014 264);
+  --scrin-fg: oklch(0.2 0.014 264);
+  --scrin-muted: oklch(0.47 0.014 264);
+  --scrin-outline: oklch(0.86 0.014 264);
+  --scrin-accent: oklch(0.52 0.17 264);
+  --scrin-accent-fg: oklch(0.99 0 264);
+  --scrin-success: oklch(0.5 0.13 150);
+  --scrin-warning: oklch(0.55 0.14 70);
+  --scrin-danger: oklch(0.53 0.19 27);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-mode]) {
+    --scrin-bg: oklch(0.17 0.014 264);
+    --scrin-surface: oklch(0.215 0.014 264);
+    --scrin-surface-2: oklch(0.26 0.014 264);
+    --scrin-fg: oklch(0.96 0.007 264);
+    --scrin-muted: oklch(0.74 0.014 264);
+    --scrin-outline: oklch(0.36 0.014 264);
+    --scrin-accent: oklch(0.76 0.17 264);
+    --scrin-accent-fg: oklch(0.18 0.014 264);
+    color-scheme: dark;
+  }
+}
+
+/* The OS setting always wins, even before the provider has run. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --scrin-motion: 0 !important;
+  }
+}
+
+[data-motion='off'] *,
+[data-motion='off'] *::before,
+[data-motion='off'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* ---------- Surfaces ---------------------------------------------------- */
+
+@utility glass-panel {
+  background-color: var(--scrin-surface);
+  border: 1px solid var(--scrin-outline);
+}
+
+[data-surface='glass'] .glass-panel {
+  background-color: color-mix(in oklch, var(--scrin-surface) 72%, transparent);
+  border-color: color-mix(in oklch, var(--scrin-outline) 60%, transparent);
+  backdrop-filter: blur(18px) saturate(1.4);
+}
+
+[data-surface='glass'] body {
+  background-image:
+    radial-gradient(
+      60rem 40rem at 10% -10%,
+      color-mix(in oklch, var(--scrin-accent) 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      50rem 40rem at 110% 10%,
+      color-mix(in oklch, var(--scrin-accent) 14%, transparent),
+      transparent 70%
+    );
+  background-attachment: fixed;
+}
+
+/* ---------- Focus ------------------------------------------------------- */
+
+@utility focus-ring {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  &:focus-visible {
+    outline-color: var(--scrin-accent);
+  }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background-color: var(--scrin-bg);
+    color: var(--scrin-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--scrin-accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background-color: color-mix(in oklch, var(--scrin-accent) 30%, transparent);
+  }
+  @view-transition {
+    navigation: auto;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: var(--scrin-dur);
+  }
+}

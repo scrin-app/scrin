@@ -1,0 +1,79 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/scrin-crypto",
+    "crates/scrin-proto",
+    "crates/scrin-net",
+    "crates/scrin-media",
+    "crates/scrin-session",
+    "crates/scrin-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# iroh 1.x requires 1.91; raise only when a dependency forces it.
+rust-version = "1.91"
+license = "AGPL-3.0-only"
+repository = "https://github.com/scrin-app/scrin"
+authors = ["scrin contributors"]
+
+[workspace.dependencies]
+scrin-proto = { path = "crates/scrin-proto" }
+scrin-crypto = { path = "crates/scrin-crypto" }
+scrin-net = { path = "crates/scrin-net" }
+scrin-media = { path = "crates/scrin-media" }
+scrin-session = { path = "crates/scrin-session" }
+
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+anyhow = "1.0.104"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
+bytes = "1"
+
+prost = "0.14.4"
+prost-build = "0.14.4"
+protoc-bin-vendored = "3.2.0"
+
+blake3 = "1.8.7"
+zeroize = { version = "1.9.0", features = ["derive"] }
+rand = "0.10.2"
+subtle = "2.6"
+ed25519-dalek = { version = "3.0.0", features = ["rand_core", "zeroize"] }
+spake2 = "0.4.0"
+argon2 = "0.6.0"
+data-encoding = "2.11.1"
+
+iroh = { version = "1.3.0", default-features = false, features = ["tls-ring"] }
+reed-solomon-simd = "3"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+unwrap_used = "warn"
+dbg_macro = "deny"
+todo = "deny"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2

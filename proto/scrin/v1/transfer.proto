@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package scrin.v1;
+
+// One representation of the current clipboard.
+message ClipboardFormat {
+  string mime = 1;
+  uint64 size = 2;
+}
+
+// Clipboard changed; data is fetched lazily with ClipboardRequest.
+message ClipboardOffer {
+  uint64 offer_id = 1;
+  repeated ClipboardFormat formats = 2;
+}
+
+// Ask for one format of an offer.
+message ClipboardRequest {
+  uint64 offer_id = 1;
+  string mime = 2;
+}
+
+// Clipboard contents for one format.
+message ClipboardData {
+  uint64 offer_id = 1;
+  string mime = 2;
+  bytes data = 3;
+}
+
+// Proposes a file; bytes then flow on a dedicated stream for this id.
+message FileOffer {
+  uint64 id = 1;
+  // Base name only; receivers must reject path separators.
+  string name = 2;
+  uint64 size = 3;
+  // BLAKE3-256 of the whole file, verified on completion.
+  bytes blake3 = 4;
+  int64 modified_unix_ms = 5;
+}
+
+// Receiver accepts, optionally resuming from an offset.
+message FileAccept {
+  uint64 id = 1;
+  uint64 resume_offset = 2;
+}
+
+// Receiver progress acknowledgement.
+message FileChunkAck {
+  uint64 id = 1;
+  uint64 bytes_received = 2;
+}
+
+// Why a transfer stopped.
+enum FileCancelReason {
+  FILE_CANCEL_REASON_UNSPECIFIED = 0;
+  FILE_CANCEL_REASON_USER = 1;
+  FILE_CANCEL_REASON_DECLINED = 2;
+  FILE_CANCEL_REASON_NO_PERMISSION = 3;
+  FILE_CANCEL_REASON_DISK_FULL = 4;
+  FILE_CANCEL_REASON_HASH_MISMATCH = 5;
+  FILE_CANCEL_REASON_IO_ERROR = 6;
+}
+
+// Either side aborts a transfer.
+message FileCancel {
+  uint64 id = 1;
+  FileCancelReason reason = 2;
+  string message = 3;
+}

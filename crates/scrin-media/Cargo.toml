@@ -1,0 +1,18 @@
+[package]
+name = "scrin-media"
+description = "Codec traits, packetizer, frame pacing and bandwidth estimation for scrin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+reed-solomon-simd = "3.1.0"
+thiserror = "2.0.21"
+
+[dev-dependencies]
+proptest = "1.11.0"
+
+[lints]
+workspace = true

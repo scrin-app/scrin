@@ -1,0 +1,88 @@
+// @ts-check
+import js from '@eslint/js';
+import prettier from 'eslint-config-prettier';
+import reactHooks from 'eslint-plugin-react-hooks';
+import { defineConfig } from 'eslint/config';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
+
+export default defineConfig(
+  {
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/.turbo/**',
+      '**/routeTree.gen.ts',
+      'target/**',
+      'crates/**',
+      'android/**',
+      '.copilot-tmp/**',
+      '**/playwright-report/**',
+      '**/test-results/**',
+    ],
+  },
+
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      js.configs.recommended,
+      tseslint.configs.strictTypeChecked,
+      tseslint.configs.stylisticTypeChecked,
+    ],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.es2024 },
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+        // typescript-eslint needs the TS 6 API (aliased as `typescript`); fail
+        // loudly instead of silently degrading to untyped linting.
+        onUnsupportedTypeScriptVersion: 'error',
+      },
+    },
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
+      ],
+      '@typescript-eslint/no-floating-promises': ['error', { ignoreVoid: true }],
+      '@typescript-eslint/no-misused-promises': [
+        'error',
+        { checksVoidReturn: { attributes: false } },
+      ],
+      '@typescript-eslint/restrict-template-expressions': [
+        'error',
+        { allowNumber: true, allowBoolean: false },
+      ],
+      // `void promise` is how fire-and-forget is spelled in event handlers.
+      '@typescript-eslint/no-confusing-void-expression': ['error', { ignoreArrowShorthand: true }],
+      'no-console': ['error', { allow: ['warn', 'error'] }],
+      eqeqeq: ['error', 'smart'],
+    },
+  },
+
+  {
+    files: ['**/*.tsx'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: { ...reactHooks.configs.recommended.rules },
+  },
+
+  {
+    files: ['**/*.{test,spec}.{ts,tsx}', '**/test/**', '**/e2e/**'],
+    rules: {
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
+
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    extends: [js.configs.recommended, tseslint.configs.disableTypeChecked],
+    languageOptions: { globals: { ...globals.node } },
+  },
+
+  prettier,
+);

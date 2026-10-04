@@ -1,0 +1,47 @@
+name: Feature request
+description: Suggest an improvement or a new capability for scrin
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How you would like it to work.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platforms affected
+      multiple: true
+      options:
+        - Windows
+        - Android
+        - Web
+        - Server
+        - All
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds or other tools you use today.
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and privacy impact
+      description: Does this let a controller do something new on the host, or move data off it?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and the tracker (docs/TRACKER.md) for this idea.
+          required: true

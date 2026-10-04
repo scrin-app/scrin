@@ -1,0 +1,23 @@
+[package]
+name = "scrin-net"
+description = "iroh transport, framing, stream kinds and datagram FEC for scrin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+scrin-crypto.workspace = true
+iroh.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+getrandom = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

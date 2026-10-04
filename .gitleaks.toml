@@ -1,0 +1,26 @@
+# gitleaks — secret scanning (pre-commit on staged files, CI on full history).
+# Extends the upstream default rule set; only project-specific allowlists here.
+title = "scrin gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Known-answer test vectors and fixtures are public by design"
+paths = [
+    '''(^|/)tests?/vectors/''',
+    '''(^|/)testdata/''',
+    '''(^|/)\.copilot-tmp/''',
+    '''(^|/)target/''',
+    '''(^|/)node_modules/''',
+    '''(^|/)pnpm-lock\.yaml$''',
+    '''(^|/)Cargo\.lock$''',
+    '''^LICENSE$''',
+]
+
+[[allowlists]]
+description = "Placeholders in examples and docs"
+regexTarget = "match"
+regexes = [
+    '''(?i)(example|placeholder|changeme|your[-_]?(api[-_]?)?key|xxxxx+)''',
+]

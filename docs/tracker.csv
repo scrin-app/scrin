@@ -1,0 +1,107 @@
+id,epic,title,type,priority,status,evidence
+F-001,Foundation,Repo skeleton: Cargo workspace (edition 2024) + pnpm 12 workspace with catalogs + turbo,task,P0,done,VERIFIED 2026-10-04: cargo test --workspace ok (158 tests); pnpm install ok; turbo.json present
+F-002,Foundation,Toolchain pins: rust-toolchain.toml 1.99 + .nvmrc 24 + packageManager pnpm,task,P0,done,VERIFIED: rust-toolchain.toml 1.99.0; .nvmrc 24; packageManager pnpm@12.3.4
+F-003,Foundation,LICENSE AGPL-3.0-only + README + CONTRIBUTING (DCO) + SECURITY.md + CODE_OF_CONDUCT,task,P0,done,VERIFIED: LICENSE (gnu.org AGPL text 34523 B); README; CONTRIBUTING (DCO); SECURITY; CODE_OF_CONDUCT
+F-004,Foundation,.gitignore / .ignore / .gitattributes (LF) / editorconfig,task,P0,done,VERIFIED: .gitignore .ignore .gitattributes .editorconfig present
+F-005,Foundation,AGENTS.md + .github/copilot-instructions.md + .github/instructions/* + skills,task,P0,done,VERIFIED: AGENTS.md; .github/copilot-instructions.md; instructions x6; skills x6
+F-006,Foundation,scripts/gates.ps1 lanes rust/js/proto/android/size/e2e/invariants,task,P0,done,VERIFIED: gates.ps1 -Only invariants PASS; proto/android/size SKIP (buf missing; no android/; size script pending)
+F-007,Foundation,lefthook pre-commit + commit-msg + pre-push,task,P0,done,VERIFIED: pnpm install -> lefthook install synced pre-commit/commit-msg/pre-push
+F-008,Foundation,check-invariants.ps1 + test-invariants.ps1 (mutation-tested),task,P0,done,VERIFIED: check-invariants INV-01..14 PASS; test-invariants 25 mutations caught
+F-009,Foundation,CI: ci.yml path-filtered + single required gate job; actions pinned by SHA,task,P0,doing,ci.yml written (SHA-pinned); not yet run on GitHub (no remote/org)
+F-010,Foundation,cargo-deny (AGPL-compatible licence allowlist) + gitleaks + pnpm audit,task,P0,done,VERIFIED: cargo deny check licenses bans sources ok; pnpm audit no vulns; gitleaks dir no leaks
+F-011,Foundation,Size budgets (web chunk gzip; desktop installer; APK),task,P1,done,VERIFIED: apps/web size check initial JS 141.1 KB gzip <= 150 KB
+F-012,Foundation,GitHub org (dedicated) + public repo + branch protection,task,P1,todo,needs user to create org
+P-001,Protocol,proto/scrin/v1 (envelope; hello/caps; session; input; clipboard; files; chat; control) + buf lint/breaking,story,P0,done,VERIFIED: proto/scrin/v1 7 files; scrin-proto 13 tests pass (buf lint pending: buf not installed)
+P-002,Protocol,Hand-packed 16-byte media header + shard header (frame id; shard idx; fec),story,P0,done,VERIFIED: scrin-proto media::MediaHeader 16 B + scrin-media fec::ShardHeader; tests pass
+P-003,Protocol,Version + capability negotiation inside encrypted channel; prologue bound to transcript,story,P0,todo,
+P-004,Protocol,Cross-language test vectors (Rust; TS; Kotlin),story,P1,todo,
+C-001,Crypto,Device identity Ed25519; sealed storage (DPAPI / Android Keystore / WebCrypto),story,P0,todo,
+C-002,Crypto,One-time code generator (8 chars; 30-symbol alphabet; 10 min; single use),story,P0,done,VERIFIED: scrin-crypto code tests (5) pass
+C-003,Crypto,SPAKE2 over QUIC bound to endpoint ids + ALPN; key confirmation,story,P0,done,VERIFIED: scrin-crypto pake tests + scrin-net loopback correct/wrong code tests pass
+C-004,Crypto,SAS: 5 emoji from transcript shown on both sides,story,P0,done,VERIFIED: sas tests; loopback test both sides SAS equal
+C-005,Crypto,Trust store (keyed MAC) + unattended trust list + revoke,story,P0,done,VERIFIED: trust tests + scrin-net trusted auth loopback tests (trusted ok; untrusted/expired/bad sig refused)
+C-006,Crypto,Permanent password: Argon2id verifier + PAKE check,story,P1,todo,
+C-007,Crypto,Audit log hash chain + Ed25519 signatures + server anchoring,story,P1,todo,
+N-001,Network,iroh 1.3 endpoint; ALPN scrin/1; custom RelayMap; dev vs prod relays,story,P0,todo,
+N-002,Network,Framing + stream kinds (control; input; clipboard; file; chat; tunnel),story,P0,done,VERIFIED: scrin-net framing + loopback framed echo 200 KB + unknown stream kind skipped
+N-003,Network,Datagram packetizer + Reed-Solomon FEC (adaptive 5-30%),story,P0,done,VERIFIED: scrin-media fec 15 tests incl. proptest loss/reorder/dup
+N-004,Network,Bandwidth estimation (delay-gradient trendline + loss) -> bitrate/fps/res controller,story,P0,doing,scrin-media bwe+adapt implemented (17 tests; simulated link); needs real-network tuning
+N-005,Network,Reconnect with backoff + path migration (relay<->direct),story,P0,todo,
+N-006,Network,Clock-offset ping + latency breakdown stats,story,P1,doing,scrin-media clock (9 tests); stats wiring pending
+N-007,Network,LAN discovery (mDNS hint) + direct IP connect,story,P1,todo,
+N-008,Network,Network diagnostics: NAT type; UDP blocked; relay RTT; fix-it guide,story,P1,todo,
+N-009,Network,Wake-on-LAN through a peer on the same LAN,story,P2,todo,
+SV-001,Server,Rendezvous: ID registry bound to key; signed RPC; online presence; code attempt limits,story,P0,todo,
+SV-002,Server,Self-hosted iroh-relay with access control (rendezvous-issued tokens),story,P0,todo,
+SV-003,Server,WebTransport gateway browser->iroh host + WebSocket 443 fallback,story,P0,todo,
+SV-004,Server,Rate limits; abuse blocklist; quotas for anonymous sessions,story,P0,todo,
+SV-005,Server,Docker image (distroless) + docker-compose self-host bundle,story,P0,todo,
+SV-006,Server,/health + /ready + Prometheus metrics + structured logs,story,P1,todo,
+SV-007,Server,GCP: Terraform for GCE relay VMs + DNS scrin.dragoscatalin.ro,story,P1,todo,
+W-001,Windows host,DXGI Desktop Duplication capture (multi-monitor; dirty rects; cursor channel; ACCESS_LOST recovery),story,P0,todo,
+W-002,Windows host,Media Foundation hardware encoder (H.264/HEVC/AV1) low-latency config,story,P0,todo,
+W-003,Windows host,openh264 software fallback,story,P0,todo,
+W-004,Windows host,SendInput scancode + unicode + relative mouse,story,P0,todo,
+W-005,Windows host,WASAPI loopback (process-exclude) -> Opus,story,P0,todo,
+W-006,Windows host,Clipboard text/html/image sync with echo suppression,story,P0,todo,
+W-007,Windows host,SYSTEM service + per-session agent; UAC secure desktop; login screen; SendSAS,story,P0,todo,
+W-008,Windows host,Virtual display (VDD IddCx) per client: resolution/refresh/HDR match,story,P1,todo,
+W-009,Windows host,Privacy mode (virtual display + physical blank) with on-screen banner,story,P1,todo,
+W-010,Windows host,Gamepad via ViGEmBus 1.22 (optional component),story,P1,todo,
+W-011,Windows host,Microphone from client -> host virtual input,story,P2,todo,
+W-012,Windows host,Remote restart + reconnect; switch monitor; block local input,story,P1,todo,
+W-013,Windows host,NVENC/AMF direct backends (intra-refresh; ref invalidation) for gaming mode,story,P2,todo,
+WC-001,Windows client,MF hardware decoder -> D3D11 swapchain child window,story,P0,todo,
+WC-002,Windows client,Input capture: keyboard hooks (Win key passthrough); pointer lock; gamepad (XInput),story,P0,todo,
+WC-003,Windows client,Audio playback with jitter buffer,story,P0,todo,
+WC-004,Windows client,Fullscreen; scaling modes (fit; 1:1; stretch); multi-monitor view,story,P0,todo,
+D-001,Desktop UI,Home: my ID + one-time code + copy/share/QR; connect box with recent,story,P0,todo,
+D-002,Desktop UI,Incoming request dialog with anti-scam interstitial; permissions; SAS,story,P0,todo,
+D-003,Desktop UI,Session toolbar (morphing): quality; displays; keys; files; chat; record; stats overlay; end,story,P0,todo,
+D-004,Desktop UI,Address book + devices + groups + tags + search (virtualized),story,P1,todo,
+D-005,Desktop UI,Settings: general; security; network; video; audio; input; theme; language; updates; about,story,P0,todo,
+D-006,Desktop UI,Tray; autostart; single instance; deep links scrin://; window state,story,P0,todo,
+D-007,Desktop UI,Auto-updater (minisign manifest),story,P1,todo,
+D-008,Desktop UI,NSIS installer (per-user + per-machine with service) + portable mode,story,P0,todo,
+U-001,UI system,packages/ui: tokens; ThemeProvider; Button/Input/Dialog/Menu/Tabs/Toast/Skeleton/Tooltip/Combobox on Base UI,story,P0,done,VERIFIED: packages/ui components; vitest axe light+dark pass
+U-002,UI system,Theme: light/dark/system; OKLCH accent; surface solid/glass/AMOLED; density; motion scale; AA tests,story,P0,done,VERIFIED: contrast tests 13 presets x modes x surfaces pass
+U-003,UI system,i18n EN+RO with drift + callsite tests,story,P0,done,VERIFIED: i18n drift + callsite tests pass
+U-004,UI system,Motion 14 LazyMotion + ViewTransition + reduced motion; compositor-only invariant,story,P0,todo,
+U-005,UI system,Responsive 360px -> 32:9 ultrawide; container queries; Playwright visual baselines,story,P0,todo,
+U-006,UI system,a11y WCAG 2.2 AA: keyboard; focus; labels; axe gate,story,P0,todo,
+U-007,UI system,ScrinHost platform interface (WebHost; DesktopHost),story,P0,doing,WebHost (mock engine) done; DesktopHost pending
+WB-001,Web client,SPA shell (TanStack Router) + PWA manifest,story,P0,todo,
+WB-002,Web client,WebTransport client + WASM handshake (scrin-wasm),story,P0,todo,
+WB-003,Web client,WebCodecs VideoDecoder -> WebGPU/WebGL2 canvas; AudioDecoder -> AudioWorklet,story,P0,todo,
+WB-004,Web client,Keyboard/mouse/touch capture; pointer lock; fullscreen; clipboard on focus,story,P0,todo,
+WB-005,Web client,File upload/download through streams,story,P1,todo,
+A-001,Android,Gradle project (AGP 9.4; Kotlin 2.4.20; Compose BOM 2026.09; navigation3; gms/foss flavours),story,P0,todo,
+A-002,Android,core-ffi: cargo-ndk + UniFFI library mode + JNA host tests,story,P0,todo,
+A-003,Android,Client: MediaCodec low-latency decode -> SurfaceView; touch modes (trackpad/direct); keyboard,story,P0,todo,
+A-004,Android,Host attended: MediaProjection FGS + MediaCodec encode + AudioPlaybackCapture,story,P0,todo,
+A-005,Android,Host input: AccessibilityService (gestures; global actions; text) + prominent disclosure; restricted-settings guide,story,P0,todo,
+A-006,Android,Material 3 theme from shared tokens; RO+EN strings; dynamic color option,story,P0,todo,
+A-007,Android,Device Owner / MDM mode for unattended (optional),story,P2,todo,
+A-008,Android,Android TV client (D-pad; gamepad),story,P2,todo,
+A-009,Android,Advanced Protection detection -> view-only fallback,story,P1,todo,
+API-001,Accounts API,Hono + zod-openapi + Drizzle + PG17 skeleton; /health; pino,story,P0,todo,
+API-002,Accounts API,better-auth: email + passkey + TOTP; org OIDC,story,P0,todo,
+API-003,Accounts API,Orgs; roles; members; devices; groups; address book; policies,story,P0,todo,
+API-004,Accounts API,Session logs + audit events + webhooks,story,P1,todo,
+API-005,Accounts API,JIT grants + approval workflow + scheduled windows,story,P2,todo,
+API-006,Accounts API,Billing (Pro) via brivio; email via brivio,story,P2,todo,
+API-007,Accounts API,OpenAPI -> packages/sdk -> CLI + MCP server,story,P1,todo,
+CN-001,Console,Web console: devices; address book; orgs; members; policies; audit; billing,story,P1,todo,
+X-001,Features,File transfer manager (resume; BLAKE3 verify; drag and drop),story,P1,todo,
+X-002,Features,Chat + whiteboard/annotation overlay,story,P1,todo,
+X-003,Features,Session recording with searchable key events + playback,story,P2,todo,
+X-004,Features,TCP tunnel / port forward + terminal-only mode,story,P2,todo,
+X-005,Features,Low-bandwidth mode (~100 kbps text-optimized),story,P2,todo,
+X-006,Features,RDP/SSH/VNC gateway in address book,story,P2,todo,
+X-007,Features,AI session summary via codai gateway (opt-in),story,P2,todo,
+X-008,Features,MSP: tenants; branding; custom client built in CI,story,P2,todo,
+X-009,Features,Multi-technician session + handoff,story,P2,todo,
+X-010,Features,Anti-scam: sensitive-app blur; Stop & report; anonymous caps,story,P0,todo,
+B-001,Brand,Brand pack: logo; palette; icons; favicons; app icons (Brand Designer flow),story,P1,todo,
+DOC-001,Docs,apps/site Astro Starlight: install; self-host; security model; FAQ (EN+RO),story,P1,todo,
+DOC-002,Docs,ADRs for every architectural decision,task,P0,todo,

@@ -1,0 +1,30 @@
+# Git hooks. Install once per clone: `pnpm exec lefthook install`
+# (or `lefthook install` with a standalone lefthook). Emergency bypass for ONE
+# command: `$env:LEFTHOOK=0` — CI runs the same checks anyway.
+# pre-commit: seconds, staged files only. pre-push: the real gates.
+output: [summary, failure]
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: secrets
+      # skipped (not failed) when gitleaks is absent; CI always runs it
+      run: pwsh -NoProfile -File scripts/secrets-staged.ps1
+    - name: rustfmt
+      glob: "*.rs"
+      run: rustfmt --check --edition 2024 {staged_files}
+    - name: oxlint
+      glob: "*.{ts,tsx,js,mjs,cjs}"
+      run: pnpm exec oxlint {staged_files}
+    - name: staged-files
+      run: node scripts/check-staged.mjs {staged_files}
+
+commit-msg:
+  jobs:
+    - name: conventional-commit-dco
+      run: node scripts/check-commit-msg.mjs {1}
+
+pre-push:
+  jobs:
+    - name: gates
+      run: pwsh -NoProfile -File scripts/gates.ps1 -Only rust,js,invariants

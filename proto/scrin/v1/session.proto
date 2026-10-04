@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package scrin.v1;
+
+// A capability granted by the host for one session; revocable live.
+enum Permission {
+  PERMISSION_UNSPECIFIED = 0;
+  PERMISSION_VIEW = 1;
+  PERMISSION_INPUT = 2;
+  PERMISSION_CLIPBOARD = 3;
+  PERMISSION_FILES_IN = 4;
+  PERMISSION_FILES_OUT = 5;
+  PERMISSION_AUDIO = 6;
+  PERMISSION_MICROPHONE = 7;
+  PERMISSION_RESTART = 8;
+  PERMISSION_TERMINAL = 9;
+  PERMISSION_RECORD = 10;
+  PERMISSION_PRIVACY_MODE = 11;
+  PERMISSION_BLOCK_INPUT = 12;
+  PERMISSION_TUNNEL = 13;
+  PERMISSION_CHAT = 14;
+  PERMISSION_WHITEBOARD = 15;
+}
+
+// Why the host refused a session.
+enum SessionRejectReason {
+  SESSION_REJECT_REASON_UNSPECIFIED = 0;
+  SESSION_REJECT_REASON_DECLINED_BY_USER = 1;
+  SESSION_REJECT_REASON_TIMEOUT = 2;
+  SESSION_REJECT_REASON_BUSY = 3;
+  SESSION_REJECT_REASON_NOT_TRUSTED = 4;
+  SESSION_REJECT_REASON_POLICY = 5;
+  SESSION_REJECT_REASON_VERSION_UNSUPPORTED = 6;
+  SESSION_REJECT_REASON_AUTH_FAILED = 7;
+  SESSION_REJECT_REASON_RATE_LIMITED = 8;
+}
+
+// Why a running session ended.
+enum SessionEndReason {
+  SESSION_END_REASON_UNSPECIFIED = 0;
+  SESSION_END_REASON_CLOSED_BY_CONTROLLER = 1;
+  SESSION_END_REASON_CLOSED_BY_HOST = 2;
+  SESSION_END_REASON_TIMEOUT = 3;
+  SESSION_END_REASON_NETWORK_LOST = 4;
+  SESSION_END_REASON_PERMISSION_REVOKED = 5;
+  SESSION_END_REASON_TIME_LIMIT = 6;
+  SESSION_END_REASON_REPORTED = 7;
+  SESSION_END_REASON_PROTOCOL_ERROR = 8;
+  SESSION_END_REASON_HOST_SHUTDOWN = 9;
+}
+
+// Controller asks the host to open a session with these permissions.
+message SessionRequest {
+  repeated Permission requested = 1;
+  // Display name of the controller, shown in the pre-accept interstitial.
+  string controller_name = 2;
+  // True when authenticated via AuthTrusted (no user at the host).
+  bool unattended = 3;
+}
+
+// Host accepted; carries the actually granted permissions and its displays.
+message SessionAccept {
+  repeated Permission granted = 1;
+  repeated DisplayInfo displays = 2;
+  // Session time limit in seconds; 0 = unlimited (anonymous sessions are capped).
+  uint32 max_duration_s = 3;
+}
+
+// Host refused the session.
+message SessionReject {
+  SessionRejectReason reason = 1;
+  string message = 2;
+}
+
+// Full replacement of the granted permission set (grant or revoke live).
+message PermissionsUpdate {
+  repeated Permission granted = 1;
+}
+
+// One monitor on the host, in virtual-desktop coordinates.
+message DisplayInfo {
+  uint32 id = 1;
+  string name = 2;
+  int32 x = 3;
+  int32 y = 4;
+  uint32 width = 5;
+  uint32 height = 6;
+  // Refresh rate in millihertz (59940 = 59.94 Hz).
+  uint32 refresh_mhz = 7;
+  // DPI scale factor, 1.0 = 96 DPI.
+  float scale = 8;
+  bool primary = 9;
+  bool hdr = 10;
+}
+
+// Controller picks which display a video stream shows.
+message SelectDisplay {
+  uint32 display_id = 1;
+  uint32 stream_id = 2;
+}
+
+// Either side terminates the session.
+message SessionEnd {
+  SessionEndReason reason = 1;
+  string message = 2;
+}
+
+// Text chat between the two operators.
+message ChatMessage {
+  uint64 id = 1;
+  string text = 2;
+  int64 sent_unix_ms = 3;
+}

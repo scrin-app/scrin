@@ -1,0 +1,13 @@
+[package]
+name = "scrin-ffi"
+description = "UniFFI bindings of the scrin core for Android"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,84 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Exact pins, verified against the npm registry on 2026-10-04. Every
+# package.json in the repo references these with `catalog:`.
+catalog:
+  # React
+  react: 19.3.0
+  react-dom: 19.3.0
+  '@types/react': 19.3.0
+  '@types/react-dom': 19.3.0
+
+  # TypeScript — dual install. typescript-eslint 8.71.0 peers on
+  # `typescript >=4.8.4 <6.1.0`, so `typescript` is the TS 6 API package and
+  # the TS 7 native compiler provides `tsc` for typecheck/build.
+  typescript: npm:@typescript/typescript6@6.0.2
+  '@typescript/native': npm:typescript@7.0.2
+  '@types/node': 24.13.4
+
+  # Build
+  vite: 8.3.2
+  '@vitejs/plugin-react': 6.1.1
+  '@tanstack/router-plugin': 1.168.42
+  turbo: 2.11.7
+
+  # Styling / UI
+  tailwindcss: 4.3.3
+  '@tailwindcss/vite': 4.3.3
+  '@base-ui/react': 1.8.0
+  clsx: 2.1.1
+  tailwind-merge: 3.7.0
+  class-variance-authority: 0.7.1
+  lucide-react: 1.51.0
+  motion: 14.0.0
+  sonner: 2.0.8
+
+  # State / data / routing
+  zustand: 5.0.15
+  zod: 4.6.5
+  '@tanstack/react-query': 5.104.1
+  '@tanstack/react-router': 1.170.41
+  '@tanstack/react-virtual': 3.14.13
+  # Reserved for packages/protocol (protobuf-es over proto/scrin/v1).
+  '@bufbuild/protobuf': 2.16.0
+
+  # i18n
+  i18next: 26.4.2
+  react-i18next: 17.0.15
+
+  # Testing
+  vitest: 5.0.3
+  # Reserved for Vitest Browser Mode once WebCodecs paths need a real browser.
+  '@vitest/browser-playwright': 5.0.3
+  happy-dom: 20.14.5
+  '@testing-library/react': 16.3.3
+  '@testing-library/dom': 10.4.2
+  '@testing-library/user-event': 14.6.7
+  axe-core: 4.13.0
+  '@playwright/test': 1.63.0
+  '@axe-core/playwright': 4.13.0
+
+  # Lint / format / hygiene
+  eslint: 10.12.0
+  '@eslint/js': 10.0.1
+  typescript-eslint: 8.71.0
+  eslint-plugin-react-hooks: 7.1.1
+  eslint-config-prettier: 10.1.8
+  globals: 17.13.0
+  oxlint: 1.86.0
+  oxlint-tsgolint: 7.0.2003
+  prettier: 3.9.9
+  prettier-plugin-tailwindcss: 0.8.1
+  knip: 6.39.0
+
+minimumReleaseAge: 1440
+# Only versions that pnpm reported as younger than 24 h on 2026-10-04.
+# lucide-react 1.51.0 is the pinned icon release; drop this after 2026-10-05.
+minimumReleaseAgeExclude:
+  - lucide-react@1.51.0
+
+strictDepBuilds: true
+allowBuilds:
+  lefthook: true

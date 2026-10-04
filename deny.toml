@@ -1,0 +1,86 @@
+# cargo-deny — supply-chain gate for the Rust workspace (ADR-0001).
+# Local: `cargo deny check`; CI: the `deny` job in .github/workflows/ci.yml;
+# gates: `scripts/gates.ps1 -Only rust` (when cargo-deny is installed).
+
+[graph]
+# Only the targets we ship. An empty list would pull per-OS dependency trees
+# we never build and raise advisories for code that never ships.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-linux-android",
+    "x86_64-linux-android",
+    "wasm32-unknown-unknown",
+]
+all-features = false
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Vulnerabilities always fail. Unmaintained only for direct dependencies:
+# flagging transitive crates nobody here can act on trains people to ignore it.
+unmaintained = "workspace"
+yanked = "warn"
+ignore = []
+
+[licenses]
+# Everything here is compatible with distributing the combined work under
+# AGPL-3.0-only. Anything not listed fails: a new copyleft dependency must be
+# a deliberate decision recorded in an ADR. GPL-2.0-only is NOT compatible.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "MPL-2.0",
+    "CC0-1.0",
+    "0BSD",
+    # Public-domain dedication; via iroh-relay -> ws_stream_wasm (pharos,
+    # async_io_stream) for the wasm32 relay client.
+    "Unlicense",
+    "BSL-1.0",
+    "OpenSSL",
+    # webpki-roots ships Mozilla's root store as data under CDLA.
+    "CDLA-Permissive-2.0",
+    # Our own crates, and GPL-3.0-compatible copyleft.
+    "AGPL-3.0-only",
+    "AGPL-3.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "LGPL-2.1-or-later",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+# Workspace members are ours; their licence is the repository's.
+private = { ignore = true }
+
+[bans]
+# Warn: a duplicate is nearly always a transitive mid-upgrade. Still visible,
+# because two copies of iroh or rustls would be a real problem.
+multiple-versions = "warn"
+# Internal crates are `{ workspace = true }` path deps, which read as `*`.
+wildcards = "warn"
+allow-wildcard-paths = true
+allow = []
+deny = [
+    # ADR-0002/0005: no OpenSSL linkage; rustls + ring only.
+    { crate = "openssl-sys", reason = "rustls only (ADR-0003)" },
+]
+skip = []
+skip-tree = []
+
+[sources]
+# crates.io only. A git dependency needs an ADR and an allow-git entry in the
+# same commit.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

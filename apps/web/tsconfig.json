@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../../node_modules/.cache/tsc/web",
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src/**/*", "e2e/**/*", "vite.config.ts", "vitest.config.ts", "package.json"],
+  "references": [{ "path": "../../packages/i18n" }, { "path": "../../packages/ui" }]
+}

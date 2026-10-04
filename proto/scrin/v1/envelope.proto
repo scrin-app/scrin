@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package scrin.v1;
+
+import "scrin/v1/auth.proto";
+import "scrin/v1/hello.proto";
+import "scrin/v1/input.proto";
+import "scrin/v1/media.proto";
+import "scrin/v1/session.proto";
+import "scrin/v1/transfer.proto";
+
+// Every control-plane message on a reliable stream is one Envelope.
+// Field numbers are grouped by area and never reused:
+//   1-9 handshake, 10-19 session, 20-39 media control, 40-59 input,
+//   60-69 clipboard, 70-79 files, 80-89 chat/end.
+message Envelope {
+  oneof payload {
+    Hello hello = 1;
+    PairStart pair_start = 2;
+    PairConfirm pair_confirm = 3;
+    AuthTrusted auth_trusted = 4;
+
+    SessionRequest session_request = 10;
+    SessionAccept session_accept = 11;
+    SessionReject session_reject = 12;
+    PermissionsUpdate permissions_update = 13;
+    SelectDisplay select_display = 14;
+
+    VideoConfig video_config = 20;
+    KeyframeRequest keyframe_request = 21;
+    BitrateFeedback bitrate_feedback = 22;
+    Ping ping = 23;
+    Pong pong = 24;
+    Stats stats = 25;
+    CursorShape cursor_shape = 26;
+    CursorPosition cursor_position = 27;
+
+    KeyEvent key_event = 40;
+    MouseMove mouse_move = 41;
+    MouseButton mouse_button = 42;
+    MouseWheel mouse_wheel = 43;
+    TouchEvent touch_event = 44;
+    GamepadState gamepad_state = 45;
+
+    ClipboardOffer clipboard_offer = 60;
+    ClipboardRequest clipboard_request = 61;
+    ClipboardData clipboard_data = 62;
+
+    FileOffer file_offer = 70;
+    FileAccept file_accept = 71;
+    FileChunkAck file_chunk_ack = 72;
+    FileCancel file_cancel = 73;
+
+    ChatMessage chat_message = 80;
+    SessionEnd session_end = 81;
+  }
+
+  // Kept for private experiments; never assigned in the public protocol.
+  reserved 900 to 999;
+}

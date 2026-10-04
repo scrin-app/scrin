@@ -1,0 +1,14 @@
+@import 'tailwindcss';
+@import '@scrin/ui/theme.css';
+
+/* The UI package is a symlinked workspace dependency; Tailwind skips
+   node_modules during auto-detection, so point it at the sources. */
+@source '../../../packages/ui/src';
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100dvh;
+  }
+}

@@ -1,0 +1,94 @@
+name: Bug report
+description: Something in scrin does not work as expected
+title: "bug: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security vulnerabilities must not be reported here** — use a
+        private security advisory (see SECURITY.md). Never paste one-time codes, passwords or keys.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Where does the problem happen? Select every side involved.
+      multiple: true
+      options:
+        - Windows
+        - Android
+        - Web
+        - Server
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Role
+      options:
+        - Controller (client)
+        - Host (being controlled)
+        - Both
+        - Not applicable
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: scrin version
+      description: Shown in Settings → About (e.g. 0.2.0). Include both sides if they differ.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / device / browser
+      placeholder: "Windows 11 24H2; Samsung Galaxy A51 Android 13; Chrome 141"
+  - type: dropdown
+    id: connection
+    attributes:
+      label: Connection path
+      options:
+        - Direct (P2P)
+        - Relay
+        - Browser gateway
+        - Self-hosted server
+        - Do not know
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start host on …
+        2. Connect from …
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log lines (Settings → Diagnostics → Export logs). Remove anything private.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

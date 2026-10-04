@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "../../node_modules/.cache/tsc/i18n",
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "vitest.config.ts"]
+}

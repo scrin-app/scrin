@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "jsx-a11y", "unicorn", "oxc", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "env": { "browser": true, "es2024": true },
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/routeTree.gen.ts",
+    "target/**",
+    "crates/**",
+    "android/**",
+    ".copilot-tmp/**"
+  ],
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "import/no-unassigned-import": "off",
+    "unicorn/no-array-sort": "off",
+    "no-underscore-dangle": "off",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": ["error", { "checksVoidReturn": { "attributes": false } }],
+    "typescript/await-thenable": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/e2e/**", "**/test/**"],
+      "rules": {
+        "typescript/no-unsafe-type-assertion": "off",
+        "typescript/no-non-null-assertion": "off"
+      }
+    }
+  ]
+}
