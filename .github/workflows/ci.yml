@@ -50,6 +50,8 @@ jobs:
             rust:
               - *shared
               - 'crates/**'
+              # workspace member outside crates/ (Tauri shell)
+              - 'apps/desktop/src-tauri/**'
               - 'proto/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
