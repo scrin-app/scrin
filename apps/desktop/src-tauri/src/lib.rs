@@ -25,6 +25,8 @@ use video::{Presenter, Rect};
 
 /// Event carrying a `scrin://` deep link to the webview.
 const DEEP_LINK_EVENT: &str = "scrin://deep-link";
+/// Desktop settings the engine needs before it starts (`<app data>/settings.json`).
+const SETTINGS_FILE: &str = "settings.json";
 
 struct AppState {
     bridge: Arc<Bridge>,
@@ -229,6 +231,77 @@ fn scrin_quit(app: AppHandle) {
     quit(&app);
 }
 
+/// Settings → Network → Server. `SCRIN_SERVER` (env) wins over the file.
+#[derive(Debug, Default, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopSettings {
+    #[serde(default)]
+    server: Option<String>,
+}
+
+fn settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join(SETTINGS_FILE))
+}
+
+fn load_settings(app: &AppHandle) -> DesktopSettings {
+    settings_path(app)
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// `http(s)://host[:port]` with nothing after the authority but an optional `/`.
+fn valid_server(s: &str) -> bool {
+    let Some((scheme, rest)) = s.split_once("://") else {
+        return false;
+    };
+    let rest = rest.trim_end_matches('/');
+    matches!(scheme, "http" | "https")
+        && !rest.is_empty()
+        && rest.len() <= 253
+        && !rest.contains(['/', '?', '#', '@', ' '])
+}
+
+/// The effective server (env, else settings).
+fn effective_server(app: &AppHandle) -> Option<String> {
+    std::env::var("SCRIN_SERVER")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| load_settings(app).server)
+        .map(|s| s.trim().trim_end_matches('/').to_owned())
+        .filter(|s| valid_server(s))
+}
+
+#[expect(clippy::needless_pass_by_value)] // Tauri's command macro passes AppHandle by value
+#[tauri::command]
+fn scrin_get_server(app: AppHandle) -> Option<String> {
+    effective_server(&app)
+}
+
+/// Saves the server; applies on the next start (the engine binds its relays
+/// at start). An empty string clears it (serverless: tickets and LAN only).
+#[expect(clippy::needless_pass_by_value)] // Tauri's command macro passes AppHandle by value
+#[tauri::command]
+fn scrin_set_server(app: AppHandle, server: String) -> Res<()> {
+    let server = server.trim().trim_end_matches('/').to_owned();
+    if !server.is_empty() && !valid_server(&server) {
+        return Err("server must be http(s)://host[:port]".into());
+    }
+    let path = settings_path(&app).ok_or("no app data directory")?;
+    let mut s = load_settings(&app);
+    s.server = (!server.is_empty()).then_some(server);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_vec_pretty(&s).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
 // ---- window, tray, lifecycle ---------------------------------------------
 
 fn show_main(app: &AppHandle) {
@@ -333,11 +406,12 @@ fn forward_deep_links(app: &AppHandle, args: &[String]) {
 fn engine_config(app: &AppHandle) -> Result<EngineConfig, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let mut cfg = EngineConfig::new(dir);
-    if let Ok(server) = std::env::var("SCRIN_SERVER")
-        && let Ok(r) = scrin_engine::resolve::HttpResolver::new(&server)
-    {
-        cfg.resolver = Arc::new(r);
-    }
+    // Registration, presence, signed resolve and the server's relays.
+    cfg.server = effective_server(app);
+    info!(
+        server = cfg.server.as_deref().unwrap_or("-"),
+        "engine config"
+    );
     Ok(cfg)
 }
 
@@ -448,6 +522,8 @@ pub fn run() {
             scrin_trust_peer,
             scrin_video_rect,
             scrin_quit,
+            scrin_get_server,
+            scrin_set_server,
         ])
         .build(tauri::generate_context!());
     let app = match app {
@@ -473,4 +549,21 @@ pub fn run() {
             api.prevent_exit();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_server;
+
+    #[test]
+    fn server_urls_are_scheme_host_port_only() {
+        assert!(valid_server("https://scrin.example.org"));
+        assert!(valid_server("http://100.95.246.105:18443"));
+        assert!(valid_server("http://localhost:1/"));
+        assert!(!valid_server("ftp://x"));
+        assert!(!valid_server("https://"));
+        assert!(!valid_server("https://a.b/path"));
+        assert!(!valid_server("https://user@a.b"));
+        assert!(!valid_server("scrin.example.org"));
+    }
 }

@@ -5,18 +5,27 @@ import android.view.SurfaceView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
@@ -29,78 +38,64 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import ro.dragoscatalin.scrin.R
 import ro.dragoscatalin.scrin.core.SessionHub
 import ro.dragoscatalin.scrin.ffi.RemoteInput
 import ro.dragoscatalin.scrin.ffi.SessionPermission
+import ro.dragoscatalin.scrin.ffi.SessionStats
 import ro.dragoscatalin.scrin.media.VideoDecoder
 import ro.dragoscatalin.scrin.ui.Format
+import ro.dragoscatalin.scrin.ui.Keys
 import ro.dragoscatalin.scrin.ui.TouchMapper
 import ro.dragoscatalin.scrin.ui.TouchMode
 import ro.dragoscatalin.scrin.ui.components.ScrinIcons
-import kotlin.math.abs
+import java.util.Locale
 
 @Composable
 fun ViewerScreen(hub: SessionHub, onClose: () -> Unit) {
     val ui by hub.ui.collectAsState()
-    val mapper = remember { TouchMapper() }
-    var mode by remember { mutableStateOf(TouchMode.TRACKPAD) }
+    var mode by remember { mutableStateOf(TouchMode.DIRECT) }
     var keyboard by remember { mutableStateOf(false) }
+    var videoSize by remember { mutableStateOf(ui.video?.let { it.width.toInt() to it.height.toInt() }) }
     val canInput = SessionPermission.INPUT in ui.granted
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        RemoteSurface(hub)
-        Box(
-            Modifier.fillMaxSize().pointerInput(canInput, mode) {
-                if (!canInput) return@pointerInput
-                awaitEachGesture {
-                    val first = awaitFirstDown()
-                    val w = size.width.toFloat()
-                    val h = size.height.toFloat()
-                    mapper.mode = mode
-                    mapper.down(0, first.position.x, first.position.y, w, h).forEach(hub::sendInput)
-                    var moved = 0f
-                    var maxPointers = 1
-                    var last = first.position
-                    while (true) {
-                        val ev = awaitPointerEvent()
-                        val pressed = ev.changes.filter { it.pressed }
-                        maxPointers = maxOf(maxPointers, pressed.size)
-                        if (pressed.isEmpty()) break
-                        val c = pressed.first()
-                        val d = c.positionChange()
-                        moved += abs(d.x) + abs(d.y)
-                        if (pressed.size >= 2) {
-                            mapper.scroll(d.y).forEach(hub::sendInput)
-                        } else {
-                            mapper.move(0, c.position.x, c.position.y, d.x, d.y, w, h).forEach(hub::sendInput)
-                        }
-                        last = c.position
-                        ev.changes.forEach { it.consume() }
-                    }
-                    mapper.up(0, last.x, last.y, w, h).forEach(hub::sendInput)
-                    if (moved < 12f) {
-                        (if (maxPointers >= 2) mapper.twoFingerTap() else mapper.tap()).forEach(hub::sendInput)
-                    }
-                }
-            },
-        )
+        Box(Modifier.fillMaxSize().safeDrawingPadding().imePadding(), contentAlignment = Alignment.Center) {
+            val ratio = videoSize?.let { (w, h) -> if (w > 0 && h > 0) w.toFloat() / h else null } ?: (16f / 9f)
+            // aspectRatio picks the largest size of this ratio that fits: letterbox, touch = video rect.
+            Box(Modifier.aspectRatio(ratio)) {
+                RemoteSurface(hub) { w, h -> videoSize = w to h }
+                TouchLayer(hub, mode, canInput)
+            }
+        }
         if (ui.video == null) {
             Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(stringResource(R.string.viewer_waiting_video), color = Color.White, style = MaterialTheme.typography.titleMedium)
@@ -109,15 +104,15 @@ fun ViewerScreen(hub: SessionHub, onClose: () -> Unit) {
         }
         ViewerToolbar(
             modifier = Modifier.align(Alignment.TopCenter).safeDrawingPadding().padding(12.dp),
-            hub = hub,
             mode = mode,
             onMode = { mode = it },
             canInput = canInput,
             onKeyboard = { keyboard = !keyboard },
             onClose = onClose,
         )
+        ui.stats?.let { StatsChip(it, Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(top = 76.dp, end = 12.dp)) }
         if (keyboard && canInput) {
-            KeyboardBar(Modifier.align(Alignment.BottomCenter).safeDrawingPadding().padding(12.dp), onSend = { hub.sendInput(RemoteInput.Text(it)) })
+            KeyboardPanel(Modifier.align(Alignment.BottomCenter).safeDrawingPadding().imePadding().padding(8.dp), hub::sendInputs)
         }
         ui.ended?.let { end ->
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).padding(24.dp), contentAlignment = Alignment.Center) {
@@ -127,8 +122,64 @@ fun ViewerScreen(hub: SessionHub, onClose: () -> Unit) {
     }
 }
 
+/** Gestures on the video rect → mouse events (see [TouchMapper]). */
 @Composable
-private fun RemoteSurface(hub: SessionHub) {
+private fun TouchLayer(hub: SessionHub, mode: TouchMode, canInput: Boolean) {
+    val mapper = remember { TouchMapper() }
+    val scope = rememberCoroutineScope()
+    val longPressMs = LocalViewConfiguration.current.longPressTimeoutMillis
+    Box(
+        Modifier.fillMaxSize().pointerInput(canInput, mode) {
+            if (!canInput) return@pointerInput
+            mapper.mode = mode
+            awaitEachGesture {
+                val first = awaitFirstDown(requireUnconsumed = false)
+                val w = size.width.toFloat()
+                val h = size.height.toFloat()
+                hub.sendInputs(mapper.down(first.position.x, first.position.y, w, h))
+                var timer: Job? = scope.launch {
+                    delay(longPressMs)
+                    if (mapper.longPressPending) hub.sendInputs(mapper.longPress())
+                }
+                var twoFinger = false
+                var twoFingerMoved = 0f
+                var last = first.position
+                while (true) {
+                    val ev = awaitPointerEvent(PointerEventPass.Main)
+                    val pressed = ev.changes.filter { it.pressed }
+                    if (pressed.isEmpty()) break
+                    if (pressed.size >= 2 && !twoFinger) {
+                        twoFinger = true
+                        timer?.cancel()
+                        timer = null
+                        hub.sendInputs(mapper.cancel())
+                    }
+                    val c = pressed.first()
+                    val d = c.positionChange()
+                    if (twoFinger) {
+                        twoFingerMoved += kotlin.math.abs(d.y)
+                        hub.sendInputs(mapper.scroll(d.y))
+                    } else {
+                        if (kotlin.math.abs(d.x) + kotlin.math.abs(d.y) > 0f) {
+                            hub.sendInputs(mapper.move(c.position.x, c.position.y, d.x, d.y, w, h))
+                        }
+                        last = c.position
+                    }
+                    ev.changes.forEach { it.consume() }
+                }
+                timer?.cancel()
+                if (twoFinger) {
+                    if (twoFingerMoved < viewConfiguration.touchSlop) hub.sendInputs(mapper.twoFingerTap())
+                } else {
+                    hub.sendInputs(mapper.up(last.x, last.y, w, h))
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun RemoteSurface(hub: SessionHub, onSize: (Int, Int) -> Unit) {
     var decoder by remember { mutableStateOf<VideoDecoder?>(null) }
     DisposableEffect(Unit) {
         onDispose {
@@ -142,10 +193,11 @@ private fun RemoteSurface(hub: SessionHub) {
             SurfaceView(ctx).apply {
                 holder.addCallback(object : SurfaceHolder.Callback {
                     override fun surfaceCreated(h: SurfaceHolder) {
-                        val d = VideoDecoder(h.surface) { hub.requestKeyframe() }
+                        val d = VideoDecoder(h.surface, onNeedKeyframe = { hub.requestKeyframe() }) { w, hh -> post { onSize(w, hh) } }
                         decoder = d
-                        hub.viewerSinks = d
                         hub.ui.value.video?.let(d::onVideoConfig)
+                        hub.viewerSinks = d
+                        hub.requestKeyframe()
                     }
                     override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, hh: Int) = Unit
                     override fun surfaceDestroyed(h: SurfaceHolder) {
@@ -162,37 +214,32 @@ private fun RemoteSurface(hub: SessionHub) {
 @Composable
 private fun ViewerToolbar(
     modifier: Modifier,
-    hub: SessionHub,
     mode: TouchMode,
     onMode: (TouchMode) -> Unit,
     canInput: Boolean,
     onKeyboard: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val ui by hub.ui.collectAsState()
     Surface(modifier, shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f), tonalElevation = 3.dp) {
         Row(Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             SingleChoiceSegmentedButtonRow {
                 SegmentedButton(
-                    selected = mode == TouchMode.TRACKPAD,
-                    onClick = { onMode(TouchMode.TRACKPAD) },
-                    shape = SegmentedButtonDefaults.itemShape(0, 2),
-                    enabled = canInput,
-                    icon = { Icon(ScrinIcons.Mouse, null, Modifier.size(18.dp)) },
-                ) { Text(stringResource(R.string.viewer_mode_trackpad)) }
-                SegmentedButton(
                     selected = mode == TouchMode.DIRECT,
                     onClick = { onMode(TouchMode.DIRECT) },
-                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    shape = SegmentedButtonDefaults.itemShape(0, 2),
                     enabled = canInput,
                     icon = { Icon(ScrinIcons.Touch, null, Modifier.size(18.dp)) },
                 ) { Text(stringResource(R.string.viewer_mode_direct)) }
+                SegmentedButton(
+                    selected = mode == TouchMode.TRACKPAD,
+                    onClick = { onMode(TouchMode.TRACKPAD) },
+                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    enabled = canInput,
+                    icon = { Icon(ScrinIcons.Mouse, null, Modifier.size(18.dp)) },
+                ) { Text(stringResource(R.string.viewer_mode_trackpad)) }
             }
             FilledIconButton(onClick = onKeyboard, enabled = canInput, modifier = Modifier.size(48.dp)) {
                 Icon(ScrinIcons.Keyboard, contentDescription = stringResource(R.string.viewer_keyboard))
-            }
-            ui.stats?.let { s ->
-                Text(stringResource(R.string.viewer_rtt, s.rttMs.toInt()), style = MaterialTheme.typography.labelMedium)
             }
             FilledIconButton(
                 onClick = onClose,
@@ -203,28 +250,81 @@ private fun ViewerToolbar(
     }
 }
 
+/** fps · RTT · bitrate, updated once a second from the core's stats. */
 @Composable
-private fun KeyboardBar(modifier: Modifier, onSend: (String) -> Unit) {
+private fun StatsChip(s: SessionStats, modifier: Modifier) {
+    val mbps = String.format(Locale.ROOT, "%.1f", s.bitrateBps.toDouble() / 1_000_000)
+    val fps = String.format(Locale.ROOT, "%.0f", s.fps)
+    val text = stringResource(R.string.viewer_stats, fps, s.rttMs.toInt(), mbps)
+    val path = stringResource(if (s.direct) R.string.viewer_path_direct else R.string.viewer_path_relay)
+    Surface(
+        modifier.semantics { liveRegion = LiveRegionMode.Polite; contentDescription = "$text, $path" },
+        shape = RoundedCornerShape(12.dp),
+        color = Color.Black.copy(alpha = 0.6f),
+    ) {
+        Text("$text · $path", Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** Text field that sends typed text, plus Esc/Tab/arrows/Win/Ctrl+Alt+Del and sticky Ctrl/Alt. */
+@Composable
+private fun KeyboardPanel(modifier: Modifier, send: (List<RemoteInput>) -> Unit) {
     var text by remember { mutableStateOf("") }
+    var ctrl by remember { mutableStateOf(false) }
+    var alt by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                singleLine = true,
-                label = { Text(stringResource(R.string.viewer_type_here)) },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = { if (text.isNotEmpty()) { onSend(text); text = "" } }),
-                modifier = Modifier.weight(1f).focusRequester(focus),
-            )
-            TextButton(onClick = { if (text.isNotEmpty()) { onSend(text); text = "" } }) { Text(stringResource(R.string.action_send)) }
+    val mods = (if (ctrl) Keys.MOD_CTRL else 0u) or (if (alt) Keys.MOD_ALT else 0u)
+    fun key(usage: UInt) {
+        send(Keys.press(usage, mods))
+        ctrl = false
+        alt = false
+    }
+    fun submit() {
+        if (text.isEmpty()) return
+        if (mods != 0u && text.length == 1 && text[0].isLetter()) {
+            // Ctrl/Alt + letter is a shortcut: send the physical key (HID a = 0x04).
+            key(0x04u + (text[0].lowercaseChar() - 'a').toUInt())
+        } else {
+            send(listOf(RemoteInput.Text(text)))
+        }
+        text = ""
+    }
+    Surface(modifier.fillMaxWidth().widthIn(max = 720.dp), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                SpecialKey(R.string.key_esc) { key(Keys.ESC) }
+                SpecialKey(R.string.key_tab) { key(Keys.TAB) }
+                FilterChip(selected = ctrl, onClick = { ctrl = !ctrl }, label = { Text(stringResource(R.string.key_ctrl)) }, modifier = Modifier.heightIn(min = 48.dp))
+                FilterChip(selected = alt, onClick = { alt = !alt }, label = { Text(stringResource(R.string.key_alt)) }, modifier = Modifier.heightIn(min = 48.dp))
+                SpecialKey(R.string.key_win) { send(Keys.tapModifier(Keys.WIN)) }
+                SpecialKey(R.string.key_left) { key(Keys.LEFT) }
+                SpecialKey(R.string.key_up) { key(Keys.UP) }
+                SpecialKey(R.string.key_down) { key(Keys.DOWN) }
+                SpecialKey(R.string.key_right) { key(Keys.RIGHT) }
+                SpecialKey(R.string.key_backspace) { key(Keys.BACKSPACE) }
+                SpecialKey(R.string.key_enter) { key(Keys.ENTER) }
+                SpecialKey(R.string.key_ctrl_alt_del) { send(Keys.ctrlAltDel()) }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.viewer_type_here)) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+                    keyboardActions = KeyboardActions(onSend = { submit() }),
+                    modifier = Modifier.weight(1f).focusRequester(focus),
+                )
+                TextButton(onClick = { submit() }, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(R.string.action_send)) }
+            }
         }
     }
-    DisposableEffect(Unit) {
-        runCatching { focus.requestFocus() }
-        onDispose { }
-    }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+}
+
+@Composable
+private fun SpecialKey(label: Int, onClick: () -> Unit) {
+    FilledTonalButton(onClick = onClick, modifier = Modifier.heightIn(min = 48.dp)) { Text(stringResource(label)) }
 }
 
 /** Format a session timer for the host bar. */

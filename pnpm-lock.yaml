@@ -577,6 +577,18 @@ importers:
         specifier: 'catalog:'
         version: 5.0.3(@types/node@24.13.4)(happy-dom@20.14.5)(vite@8.3.2(@types/node@24.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
+  packages/protocol:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.13.4
+      typescript:
+        specifier: 'catalog:'
+        version: '@typescript/typescript6@6.0.2'
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.3(@types/node@24.13.4)(happy-dom@20.14.5)(vite@8.3.2(@types/node@24.13.4)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+
   packages/sdk:
     dependencies:
       openapi-fetch:
@@ -610,6 +622,9 @@ importers:
       '@scrin/i18n':
         specifier: workspace:*
         version: link:../i18n
+      '@scrin/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@tauri-apps/api':
         specifier: 'catalog:'
         version: 2.12.1

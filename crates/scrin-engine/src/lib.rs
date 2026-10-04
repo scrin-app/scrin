@@ -18,7 +18,9 @@ pub mod api;
 pub mod backend;
 mod engine;
 mod error;
+pub mod gw;
 mod media;
+pub mod rendezvous;
 pub mod resolve;
 pub mod secret;
 #[cfg(all(windows, feature = "win"))]

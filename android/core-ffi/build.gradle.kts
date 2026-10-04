@@ -77,6 +77,7 @@ android {
 
 dependencies {
     implementation(libs.jna) { artifact { type = "aar" } }
+    implementation(libs.androidx.annotation) // @RequiresApi in UniFFI's android_cleaner output
     testImplementation(libs.junit)
     testImplementation(libs.jna) // desktop jar: carries the host jnidispatch the AAR lacks
 }

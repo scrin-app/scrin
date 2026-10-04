@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/i18n" },
+    { "path": "./packages/protocol" },
     { "path": "./packages/ui" },
     { "path": "./packages/sdk" },
     { "path": "./packages/cli" },

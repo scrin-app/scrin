@@ -67,6 +67,8 @@ fun HostScreen(app: ScrinApp, settings: AppSettings, onBack: () -> Unit, onRestr
     val hub = app.hub
     val ui by hub.ui.collectAsState()
     val code by hub.code.collectAsState()
+    val ticket by hub.ticket.collectAsState()
+    val scrinId by hub.scrinId.collectAsState()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var a11yOn by remember { mutableStateOf(RemoteInputService.isEnabled(ctx)) }
@@ -124,6 +126,8 @@ fun HostScreen(app: ScrinApp, settings: AppSettings, onBack: () -> Unit, onRestr
                 SectionTitle(stringResource(R.string.host_step_share))
                 Text(stringResource(R.string.host_share_body), style = MaterialTheme.typography.bodyMedium)
                 Text(hub.fingerprint, style = CodeStyle)
+                scrinId?.let { Text(stringResource(R.string.home_scrin_id, it.chunked(3).joinToString(" ")), style = CodeStyle) }
+                ticket?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Text(code?.display ?: "····-····", style = CodeStyle.copy(fontSize = MaterialTheme.typography.headlineMedium.fontSize))
                 Text(
                     stringResource(if (ui.listening) R.string.host_listening else R.string.host_not_listening),

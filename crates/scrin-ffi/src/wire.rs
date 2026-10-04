@@ -1,12 +1,15 @@
 //! Conversions between FFI types and `scrin.v1` envelopes on the Control stream.
 
-use scrin_net::framing::{read_frame, write_frame};
-use scrin_net::{RecvStream, SendStream};
+use scrin_net::framing::{StreamKind, accept_stream, open_stream, read_frame, write_frame};
+use scrin_net::{Connection, RecvStream, SendStream};
 use scrin_proto::v1::{self, envelope::Payload};
 use scrin_session::{EndReason, Permission, Permissions, RejectReason};
 use tokio::sync::mpsc;
 
 use crate::types::{MouseButtonKind, RemoteInput, TouchPhase, VideoCodec, VideoConfigInfo};
+
+/// Largest frame accepted on an Input stream (the engine's cap).
+const MAX_INPUT_FRAME: usize = 64 * 1024;
 
 /// Writes one envelope as a length-prefixed frame.
 pub(crate) async fn send(w: &mut SendStream, payload: Payload) -> scrin_net::Result<()> {
@@ -34,6 +37,47 @@ pub(crate) fn spawn_reader(
             }
         }
     })
+}
+
+/// Host: accepts the controller's `Input` streams and forwards their input
+/// envelopes into the session's payload channel. Never sends `None` (that
+/// would read as the Control stream ending).
+pub(crate) async fn accept_input_streams(
+    conn: Connection,
+    tx: mpsc::UnboundedSender<Option<Payload>>,
+) {
+    while let Ok((kind, _send, mut recv)) = accept_stream(&conn).await {
+        if kind != StreamKind::Input {
+            continue;
+        }
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            while let Ok(Some(bytes)) =
+                scrin_net::framing::read_frame_capped(&mut recv, MAX_INPUT_FRAME).await
+            {
+                if let Ok(env) = scrin_proto::decode_envelope(&bytes)
+                    && let Some(p) = env.payload
+                    && is_input(&p)
+                    && tx.send(Some(p)).is_err()
+                {
+                    return;
+                }
+            }
+        });
+    }
+}
+
+/// Controller: opens one `Input` stream and writes every queued input envelope.
+pub(crate) async fn input_writer(conn: Connection, mut rx: mpsc::UnboundedReceiver<Payload>) {
+    let Ok((mut w, _recv)) = open_stream(&conn, StreamKind::Input).await else {
+        return;
+    };
+    while let Some(p) = rx.recv().await {
+        if send(&mut w, p).await.is_err() {
+            break;
+        }
+    }
+    let _ = w.finish();
 }
 
 /// Proto enum value of a permission: index in `Permission::ALL` + 1.

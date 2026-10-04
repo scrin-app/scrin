@@ -1,23 +1,28 @@
 //! Connect tickets: the host's device id plus how to reach it, as one copyable string.
 //!
-//! `scrin1` + lowercase base32 of
-//! `ver u8 = 1 || id [32] || n u8 || n × (fam u8 (4|6) || ip || port u16 BE) || relay_len u16 BE || relay utf8`.
-//! A bare 64-hex device id is accepted too (dialled through address lookup / relays).
+//! Emitted in the desktop engine's format (`scrin_engine::resolve::encode_ticket`), so a
+//! Windows controller can dial an Android host and vice versa:
+//! `scrin:<64 hex id>?a=<ip:port>&a=…&r=<relay url>` (query keys may repeat).
+//!
+//! Also accepted: the legacy compact form `scrin1` + lowercase base32 of
+//! `ver u8 = 1 || id [32] || n u8 || n × (fam u8 (4|6) || ip || port u16 BE) || relay_len u16 BE || relay utf8`,
+//! and a bare 64-hex device id (dialled through address lookup / relays).
 //! Tickets are not secret: they carry a public key and addresses, never the code.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use data_encoding::{BASE32_NOPAD, HEXLOWER_PERMISSIVE};
+use data_encoding::{BASE32_NOPAD, HEXLOWER, HEXLOWER_PERMISSIVE};
 use iroh::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 
 use crate::types::ScrinError;
 
 const PREFIX: &str = "scrin1";
+const URI_PREFIX: &str = "scrin:";
+const MAX_URI_LEN: usize = 4096;
 const VERSION: u8 = 1;
 const MAX_ADDRS: usize = 16;
 
-/// Encodes `addr` plus any extra bound sockets (unspecified ones are skipped).
-pub(crate) fn encode(addr: &EndpointAddr, extra: &[SocketAddr]) -> String {
+fn dial_ips(addr: &EndpointAddr, extra: &[SocketAddr]) -> Vec<SocketAddr> {
     let mut ips: Vec<SocketAddr> = addr
         .ip_addrs()
         .copied()
@@ -27,7 +32,31 @@ pub(crate) fn encode(addr: &EndpointAddr, extra: &[SocketAddr]) -> String {
     ips.sort_unstable();
     ips.dedup();
     ips.truncate(MAX_ADDRS);
+    ips
+}
 
+/// Encodes `addr` plus any extra bound sockets (unspecified ones are skipped) in the
+/// desktop engine's `scrin:` form.
+pub(crate) fn encode(addr: &EndpointAddr, extra: &[SocketAddr]) -> String {
+    let mut s = format!("{URI_PREFIX}{}", HEXLOWER.encode(addr.id.as_bytes()));
+    let mut sep = '?';
+    let relay = addr.relay_urls().next().map(|u| format!("r={u}"));
+    for part in dial_ips(addr, extra)
+        .iter()
+        .map(|ip| format!("a={ip}"))
+        .chain(relay)
+    {
+        s.push(sep);
+        s.push_str(&part);
+        sep = '&';
+    }
+    s
+}
+
+/// The legacy compact `scrin1…` form (kept for tests of the decoder).
+#[cfg(test)]
+pub(crate) fn encode_compact(addr: &EndpointAddr, extra: &[SocketAddr]) -> String {
+    let ips = dial_ips(addr, extra);
     let mut b = Vec::with_capacity(64 + ips.len() * 19);
     b.push(VERSION);
     b.extend_from_slice(addr.id.as_bytes());
@@ -61,7 +90,7 @@ pub(crate) fn encode(addr: &EndpointAddr, extra: &[SocketAddr]) -> String {
     format!("{PREFIX}{}", BASE32_NOPAD.encode(&b).to_lowercase())
 }
 
-/// Parses a ticket or a bare hex device id.
+/// Parses a ticket (either form) or a bare hex device id.
 pub(crate) fn decode(input: &str) -> Result<EndpointAddr, ScrinError> {
     let s: String = input.chars().filter(|c| !c.is_whitespace()).collect();
     if s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -69,6 +98,9 @@ pub(crate) fn decode(input: &str) -> Result<EndpointAddr, ScrinError> {
             .decode(s.as_bytes())
             .map_err(|_| ScrinError::input("device id"))?;
         return Ok(EndpointAddr::new(endpoint_id(&bytes)?));
+    }
+    if let Some(rest) = s.strip_prefix(URI_PREFIX) {
+        return decode_uri(rest);
     }
     let body = s
         .strip_prefix(PREFIX)
@@ -110,6 +142,40 @@ pub(crate) fn decode(input: &str) -> Result<EndpointAddr, ScrinError> {
     }
     if !r.0.is_empty() {
         return Err(ScrinError::input("trailing ticket bytes"));
+    }
+    Ok(EndpointAddr::from_parts(id, addrs))
+}
+
+/// `<hex id>?a=<ip:port>&r=<relay>`; unknown keys are ignored (newer writers).
+fn decode_uri(rest: &str) -> Result<EndpointAddr, ScrinError> {
+    if rest.len() > MAX_URI_LEN {
+        return Err(ScrinError::input("ticket too long"));
+    }
+    let (id, query) = rest.split_once('?').unwrap_or((rest, ""));
+    if id.len() != 64 {
+        return Err(ScrinError::input("device id length"));
+    }
+    let bytes = HEXLOWER_PERMISSIVE
+        .decode(id.as_bytes())
+        .map_err(|_| ScrinError::input("device id"))?;
+    let id = endpoint_id(&bytes)?;
+    let mut addrs = Vec::new();
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair
+            .split_once('=')
+            .ok_or_else(|| ScrinError::input("ticket query"))?;
+        match k {
+            "a" => addrs.push(TransportAddr::Ip(
+                v.parse().map_err(|_| ScrinError::input("ticket address"))?,
+            )),
+            "r" => addrs.push(TransportAddr::Relay(
+                v.parse().map_err(|_| ScrinError::input("relay url"))?,
+            )),
+            _ => {}
+        }
+        if addrs.len() > MAX_ADDRS + 1 {
+            return Err(ScrinError::input("too many addresses"));
+        }
     }
     Ok(EndpointAddr::from_parts(id, addrs))
 }
@@ -164,12 +230,40 @@ mod tests {
                 TransportAddr::Relay(relay.clone()),
             ],
         );
-        let t = encode(&addr, &["0.0.0.0:9".parse().expect("sock")]);
-        assert!(t.starts_with("scrin1"));
+        for t in [
+            encode(&addr, &["0.0.0.0:9".parse().expect("sock")]),
+            encode_compact(&addr, &["0.0.0.0:9".parse().expect("sock")]),
+        ] {
+            assert!(t.starts_with("scrin:") || t.starts_with("scrin1"));
+            let back = decode(&t).expect("decode");
+            assert_eq!(back.id, addr.id);
+            assert_eq!(back.ip_addrs().count(), 2);
+            assert_eq!(back.relay_urls().next(), Some(&relay));
+        }
+    }
+
+    #[test]
+    fn engine_ticket_format_is_exact() {
+        let hex = Identity::from_seed([7; 32]).device_id().to_hex();
+        let addr = EndpointAddr::from_parts(
+            id(),
+            [TransportAddr::Ip("192.168.1.5:7000".parse().expect("sock"))],
+        );
+        assert_eq!(
+            encode(&addr, &[]),
+            format!("scrin:{hex}?a=192.168.1.5:7000")
+        );
+        assert_eq!(
+            encode(&EndpointAddr::new(id()), &[]),
+            format!("scrin:{hex}")
+        );
+        // What the desktop engine prints, including an unknown future key.
+        let t = format!("scrin:{hex}?a=10.0.0.1:1&x=y&r=https://relay.example.org/");
         let back = decode(&t).expect("decode");
-        assert_eq!(back.id, addr.id);
-        assert_eq!(back.ip_addrs().count(), 2);
-        assert_eq!(back.relay_urls().next(), Some(&relay));
+        assert_eq!(back.ip_addrs().count(), 1);
+        assert_eq!(back.relay_urls().count(), 1);
+        assert!(decode(&format!("scrin:{hex}?a=nope")).is_err());
+        assert!(decode("scrin:abcd").is_err());
     }
 
     #[test]

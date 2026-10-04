@@ -11,6 +11,9 @@
     "packages/ui": {
       "project": ["src/**/*.{ts,tsx}"]
     },
+    "packages/protocol": {
+      "project": ["src/**/*.ts"]
+    },
     "apps/web": {
       "entry": ["src/routes/**/*.tsx", "scripts/*.mjs", "e2e/**/*.ts"],
       "project": ["src/**/*.{ts,tsx}", "scripts/*.mjs"],

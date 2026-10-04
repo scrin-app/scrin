@@ -14,7 +14,8 @@
     "target/**",
     "crates/**",
     "android/**",
-    ".copilot-tmp/**"
+    ".copilot-tmp/**",
+    "packages/protocol/wasm/**"
   ],
   "rules": {
     "react/react-in-jsx-scope": "off",

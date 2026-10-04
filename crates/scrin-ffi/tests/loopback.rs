@@ -1,6 +1,7 @@
 //! Two `ScrinCore`s on loopback: quick connect, SAS match, accept, input, video, end.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+// One end-to-end scenario per test reads best as a single linear script.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,9 @@ enum Ev {
     Perms(Vec<SessionPermission>),
     Input(RemoteInput),
     VideoConfig(VideoConfigInfo),
-    Frame(Vec<u8>, bool),
+    Frame(Vec<u8>, bool, u32),
+    KeyframeRequest,
+    Stats(SessionStats),
     Ended(EndInfo),
     Other,
 }
@@ -56,14 +59,21 @@ impl SessionListener for L {
     fn on_notice(&self, _: Notice) {
         self.send(Ev::Other);
     }
-    fn on_stats(&self, _: SessionStats) {}
+    fn on_stats(&self, s: SessionStats) {
+        self.send(Ev::Stats(s));
+    }
+    fn on_registered(&self, _: String) {
+        self.send(Ev::Other);
+    }
     fn on_video_config(&self, c: VideoConfigInfo) {
         self.send(Ev::VideoConfig(c));
     }
-    fn on_video_frame(&self, d: Vec<u8>, k: bool) {
-        self.send(Ev::Frame(d, k));
+    fn on_video_frame(&self, d: Vec<u8>, k: bool, id: u32, _pts_us: u64) {
+        self.send(Ev::Frame(d, k, id));
     }
-    fn on_keyframe_request(&self) {}
+    fn on_keyframe_request(&self) {
+        self.send(Ev::KeyframeRequest);
+    }
     fn on_input(&self, e: RemoteInput) {
         self.send(Ev::Input(e));
     }
@@ -97,6 +107,7 @@ fn core(seed: u8, name: &str) -> Arc<ScrinCore> {
             device_name: name.into(),
             relay_urls: Vec::new(),
             loopback_only: true,
+            server_url: None,
         },
     )
     .expect("core")
@@ -176,7 +187,7 @@ fn quick_connect_end_to_end_on_loopback() {
         height: 2400,
         fps: 30,
         bitrate_bps: 4_000_000,
-        codec_config: vec![0, 0, 0, 1, 0x67],
+        codec_config: vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xce],
     };
     host.send_video_config(cfg.clone()).unwrap();
     assert_eq!(
@@ -186,14 +197,37 @@ fn quick_connect_end_to_end_on_loopback() {
         }),
         cfg
     );
-    let frame: Vec<u8> = (0..5000u32).map(|i| (i % 251) as u8).collect();
+    // A keyframe without SPS/PPS gets the codec config prepended in band.
+    let mut frame = vec![0u8, 0, 0, 1, 0x65];
+    frame.extend((0..5000u32).map(|i| (i % 251) as u8));
     host.send_video_frame(frame.clone(), true).unwrap();
-    let (data, kf) = wait(&crx, |e| match e {
-        Ev::Frame(d, k) => Some((d.clone(), *k)),
+    let (data, kf, id0) = wait(&crx, |e| match e {
+        Ev::Frame(d, k, id) => Some((d.clone(), *k, *id)),
         _ => None,
     });
     assert!(kf);
-    assert_eq!(data, frame);
+    assert_eq!(data, [cfg.codec_config.as_slice(), &frame].concat());
+    // A delta frame passes through untouched.
+    let delta = vec![0u8, 0, 0, 1, 0x41, 1, 2, 3];
+    host.send_video_frame(delta.clone(), false).unwrap();
+    let (data, kf, id1) = wait(&crx, |e| match e {
+        Ev::Frame(d, k, id) => Some((d.clone(), *k, *id)),
+        _ => None,
+    });
+    assert!(!kf);
+    assert_eq!(data, delta);
+    assert_eq!(id1, id0.wrapping_add(1));
+
+    // Stats carry the receive rate; the host answered our pings implicitly via RTT.
+    let stats = wait(&crx, |e| match e {
+        Ev::Stats(s) if s.frames >= 2 => Some(s.clone()),
+        _ => None,
+    });
+    assert!(stats.bytes_in > 0);
+
+    // A controller keyframe request reaches the host listener.
+    ctl.request_keyframe().unwrap();
+    wait(&hrx, |e| matches!(e, Ev::KeyframeRequest).then_some(()));
 
     ctl.end_session();
     let c_end = wait(&crx, |e| match e {

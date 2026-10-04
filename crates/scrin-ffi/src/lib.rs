@@ -10,6 +10,8 @@
 //! blocking core method ([`ScrinCore::host_info`]) synchronously; such calls
 //! return [`ScrinError::State`] instead of deadlocking.
 
+mod media;
+mod rendezvous;
 mod session;
 mod ticket;
 mod types;
@@ -17,8 +19,9 @@ mod wire;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use iroh::EndpointAddr;
 use scrin_crypto::code::{self, OneTimeCode};
 use scrin_crypto::identity::{DeviceId, Identity};
 use scrin_crypto::trust::{Profile, TrustStore, TrustedPeer};
@@ -32,17 +35,34 @@ pub use types::*;
 uniffi::setup_scaffolding!();
 
 const TRUST_FILE: &str = "trust.bin";
+/// How long `host_info` waits for the endpoint to learn a direct address.
+const ADDR_WAIT: Duration = Duration::from_secs(3);
+/// Presence refresh bounds (the server's TTL decides within them).
+const PRESENCE_MIN: Duration = Duration::from_secs(10);
+const PRESENCE_MAX: Duration = Duration::from_secs(300);
+const PRESENCE_RETRY: Duration = Duration::from_secs(15);
+
+/// What a controller dials.
+#[derive(Debug, Clone)]
+pub(crate) enum Target {
+    Addr(EndpointAddr),
+    /// 9-digit scrin ID, resolved through the rendezvous server.
+    ScrinId(String),
+}
 
 /// State shared between the exported object and its background tasks.
 pub(crate) struct Shared {
     identity: Identity,
     data_dir: PathBuf,
     config: CoreConfig,
+    server: Option<rendezvous::Client>,
     endpoint: tokio::sync::OnceCell<NetEndpoint>,
     trust: Mutex<TrustStore>,
     code: Mutex<Option<Arc<HostCode>>>,
     session: Mutex<Option<Arc<session::Session>>>,
     host_loop: Mutex<Option<JoinHandle<()>>>,
+    presence_loop: Mutex<Option<JoinHandle<()>>>,
+    scrin_id: Mutex<Option<String>>,
 }
 
 impl Shared {
@@ -57,6 +77,20 @@ impl Shared {
 
     pub(crate) fn device_id(&self) -> DeviceId {
         self.identity.device_id()
+    }
+
+    /// The endpoint's dialable address; waits (bounded) for a direct address
+    /// when the endpoint has just been bound.
+    pub(crate) async fn dial_addr(&self) -> Result<EndpointAddr, ScrinError> {
+        let ep = self.endpoint().await?;
+        let deadline = tokio::time::Instant::now() + ADDR_WAIT;
+        while !self.config.loopback_only
+            && ep.addr().ip_addrs().next().is_none()
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Ok(ep.addr())
     }
 
     pub(crate) fn host_code(&self) -> Option<Arc<HostCode>> {
@@ -101,6 +135,56 @@ impl Shared {
         if s.as_ref().is_some_and(|x| x.id() == id) {
             *s = None;
         }
+    }
+}
+
+/// Host: register with the rendezvous server, then keep the presence fresh
+/// with the current addresses until aborted.
+async fn presence_loop(shared: Arc<Shared>, listener: Arc<dyn SessionListener>) {
+    let Some(server) = shared.server.clone() else {
+        return;
+    };
+    let mut registered = false;
+    loop {
+        let wait = match shared.dial_addr().await {
+            Err(e) => {
+                listener.on_error(e.to_string());
+                return;
+            }
+            Ok(addr) => {
+                let ep_bound = match shared.endpoint().await {
+                    Ok(ep) => ep.bound_sockets(),
+                    Err(_) => Vec::new(),
+                };
+                let hint = rendezvous::AddrHint::from_addr(&addr, &ep_bound);
+                let res = if registered {
+                    match server.presence(&shared.identity, &hint).await {
+                        Err(rendezvous::ServerError::NotRegistered) => {
+                            server.register(&shared.identity, &hint).await
+                        }
+                        other => other,
+                    }
+                } else {
+                    server.register(&shared.identity, &hint).await
+                };
+                match res {
+                    Ok((id, ttl)) => {
+                        registered = true;
+                        let changed =
+                            lock(&shared.scrin_id).replace(id.clone()) != Some(id.clone());
+                        if changed {
+                            listener.on_registered(id);
+                        }
+                        Duration::from_secs(ttl / 2).clamp(PRESENCE_MIN, PRESENCE_MAX)
+                    }
+                    Err(e) => {
+                        listener.on_error(ScrinError::from(e).to_string());
+                        PRESENCE_RETRY
+                    }
+                }
+            }
+        };
+        tokio::time::sleep(wait).await;
     }
 }
 
@@ -179,6 +263,13 @@ impl ScrinCore {
             None => Identity::generate()?,
         };
         net_config(&config)?;
+        let server = config
+            .server_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+            .map(rendezvous::Client::new)
+            .transpose()?;
         let data_dir = PathBuf::from(data_dir);
         // A missing file is a fresh install; a bad MAC fails closed to an empty store.
         let trust = std::fs::read(data_dir.join(TRUST_FILE))
@@ -197,11 +288,14 @@ impl ScrinCore {
                 identity,
                 data_dir,
                 config,
+                server,
                 endpoint: tokio::sync::OnceCell::new(),
                 trust: Mutex::new(trust),
                 code: Mutex::new(None),
                 session: Mutex::new(None),
                 host_loop: Mutex::new(None),
+                presence_loop: Mutex::new(None),
+                scrin_id: Mutex::new(None),
             }),
         }))
     }
@@ -243,45 +337,64 @@ impl ScrinCore {
     pub fn host_info(&self) -> Result<HostInfo, ScrinError> {
         let shared = Arc::clone(&self.shared);
         self.block_on(async move {
+            let addr = shared.dial_addr().await?;
             let ep = shared.endpoint().await?;
             Ok(HostInfo {
-                ticket: ticket::encode(&ep.addr(), &ep.bound_sockets()),
+                ticket: ticket::encode(&addr, &ep.bound_sockets()),
                 device_id: shared.device_id().to_hex(),
                 fingerprint: shared.device_id().fingerprint(),
+                scrin_id: lock(&shared.scrin_id).clone(),
             })
         })
     }
 
-    /// Starts accepting quick-connect sessions with the current one-time code.
+    /// Starts accepting quick-connect sessions with the current one-time code
+    /// and, with a server configured, registers this device and keeps its
+    /// presence fresh (`on_registered` reports the scrin ID).
     pub fn start_host(&self, listener: Arc<dyn SessionListener>) -> Result<(), ScrinError> {
         if lock(&self.shared.code).is_none() {
             return Err(ScrinError::state("generate a one-time code first"));
         }
-        let task = self
-            .rt()?
-            .spawn(session::host_loop(Arc::clone(&self.shared), listener));
+        let rt = self.rt()?;
+        if self.shared.server.is_some() {
+            let mut p = lock(&self.shared.presence_loop);
+            if p.as_ref().is_none_or(JoinHandle::is_finished) {
+                *p = Some(rt.spawn(presence_loop(
+                    Arc::clone(&self.shared),
+                    Arc::clone(&listener),
+                )));
+            }
+        }
+        let task = rt.spawn(session::host_loop(Arc::clone(&self.shared), listener));
         if let Some(old) = lock(&self.shared.host_loop).replace(task) {
             old.abort();
         }
         Ok(())
     }
 
-    /// Stops accepting new sessions (a running session continues).
+    /// Stops accepting new sessions and refreshing presence (a running session continues).
     pub fn stop_host(&self) {
         if let Some(t) = lock(&self.shared.host_loop).take() {
             t.abort();
         }
+        if let Some(t) = lock(&self.shared.presence_loop).take() {
+            t.abort();
+        }
     }
 
-    /// Dials `target` (ticket or 64-hex id) and pairs with `code`. Returns at once;
-    /// progress arrives on `listener`.
+    /// Dials `target` (ticket, 64-hex id, or a 9-digit scrin ID when a server is
+    /// configured) and pairs with `code`. Returns at once; progress arrives on `listener`.
     pub fn connect(
         &self,
         target: String,
         code: String,
         listener: Arc<dyn SessionListener>,
     ) -> Result<(), ScrinError> {
-        let addr = ticket::decode(&target)?;
+        let target = match rendezvous::normalize_scrin_id(&target) {
+            Some(id) if self.shared.server.is_some() => Target::ScrinId(id),
+            Some(_) => return Err(ScrinError::input("a scrin ID needs a server; use a link")),
+            None => Target::Addr(ticket::decode(&target)?),
+        };
         // Validate locally so a typo never reaches the host (and never burns its code).
         code::normalize(&code)?;
         let s = session::Session::controller(listener);
@@ -291,7 +404,7 @@ impl ScrinCore {
         let task = self.rt()?.spawn(session::controller_flow(
             Arc::clone(&self.shared),
             Arc::clone(&s),
-            addr,
+            target,
             code,
         ));
         s.track(task);

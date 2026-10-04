@@ -306,14 +306,7 @@ impl MfEncoder {
         };
         enc.configure_codec_api();
         enc.set_types()?;
-        // SAFETY: valid transform; stream id from GetStreamIDs.
-        let info =
-            unsafe { enc.transform.GetOutputStreamInfo(enc.out_id) }.ctx("GetOutputStreamInfo")?;
-        enc.provides_samples = info.dwFlags
-            & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
-                .cast_unsigned()
-            != 0;
-        enc.out_size = info.cbSize.max(enc.settings.width * enc.settings.height);
+        enc.refresh_output_info()?;
         if is_async {
             enc.events = Some(enc.transform.cast().ctx("IMFMediaEventGenerator")?);
         }
@@ -339,6 +332,27 @@ impl MfEncoder {
                 tracing::debug!(property = what, error = %e, "ICodecAPI property rejected");
             }
         }
+    }
+
+    /// Re-reads the output stream info (sample ownership and size), which can change with the
+    /// output type.
+    fn refresh_output_info(&mut self) -> Result<()> {
+        // SAFETY: valid transform; stream id from GetStreamIDs.
+        let info = unsafe { self.transform.GetOutputStreamInfo(self.out_id) }
+            .ctx("GetOutputStreamInfo")?;
+        self.provides_samples = info.dwFlags
+            & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 | MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0)
+                .cast_unsigned()
+            != 0;
+        self.out_size = info.cbSize.max(self.settings.width * self.settings.height);
+        tracing::debug!(
+            encoder = %self.name,
+            flags = info.dwFlags,
+            size = info.cbSize,
+            provides_samples = self.provides_samples,
+            "MFT output stream info"
+        );
+        Ok(())
     }
 
     fn configure_codec_api(&self) {
@@ -369,19 +383,34 @@ impl MfEncoder {
         );
     }
 
-    fn set_types(&mut self) -> Result<()> {
-        let s = self.settings;
-        let out = video_type(&MFVideoFormat_H264, &s)?;
-        // SAFETY: valid media type.
+    /// Applies our size, rate, bitrate and profile to an H.264 output type.
+    fn adjust_output_type(t: &IMFMediaType, s: &EncoderSettings) -> Result<()> {
+        // SAFETY: valid media type; GUIDs are constants.
         unsafe {
-            out.SetUINT32(&MF_MT_AVG_BITRATE, s.bitrate)
+            t.SetUINT64(&MF_MT_FRAME_SIZE, pack(s.width, s.height))
+                .ctx("FRAME_SIZE")?;
+            t.SetUINT64(&MF_MT_FRAME_RATE, pack(s.fps.max(1), 1))
+                .ctx("FRAME_RATE")?;
+            t.SetUINT32(
+                &MF_MT_INTERLACE_MODE,
+                MFVideoInterlace_Progressive.0.cast_unsigned(),
+            )
+            .ctx("INTERLACE")?;
+            t.SetUINT32(&MF_MT_AVG_BITRATE, s.bitrate)
                 .ctx("AVG_BITRATE")?;
-            out.SetUINT32(
+            t.SetUINT32(
                 &MF_MT_MPEG2_PROFILE,
                 eAVEncH264VProfile_Main.0.cast_unsigned(),
             )
             .ctx("PROFILE")?;
         }
+        Ok(())
+    }
+
+    fn set_types(&mut self) -> Result<()> {
+        let s = self.settings;
+        let out = video_type(&MFVideoFormat_H264, &s)?;
+        Self::adjust_output_type(&out, &s)?;
         // SAFETY: valid transform and media type. Encoders need the output type first.
         unsafe { self.transform.SetOutputType(self.out_id, &out, 0) }.ctx("SetOutputType(H264)")?;
         let input = video_type(&MFVideoFormat_NV12, &s)?;
@@ -428,18 +457,43 @@ impl MfEncoder {
         Ok(sample)
     }
 
-    fn renegotiate_output(&self) -> Result<()> {
-        // SAFETY: valid transform; index 0 is the preferred type after a stream change.
-        let t = unsafe { self.transform.GetOutputAvailableType(self.out_id, 0) }
-            .ctx("GetOutputAvailableType")?;
+    /// Handles `MF_E_TRANSFORM_STREAM_CHANGE`: picks the first available H.264 output type,
+    /// re-applies our settings to it, sets it and re-reads the output stream info.
+    fn renegotiate_output(&mut self) -> Result<()> {
+        let mut chosen = None;
+        for i in 0..32 {
+            // SAFETY: valid transform; enumeration ends with MF_E_NO_MORE_TYPES.
+            let Ok(t) = (unsafe { self.transform.GetOutputAvailableType(self.out_id, i) }) else {
+                break;
+            };
+            // SAFETY: valid media type.
+            let sub = unsafe { t.GetGUID(&MF_MT_SUBTYPE) }.unwrap_or_default();
+            if sub == MFVideoFormat_H264 {
+                chosen = Some(t);
+                break;
+            }
+        }
+        let t = match chosen {
+            Some(t) => t,
+            None => video_type(&MFVideoFormat_H264, &self.settings)?,
+        };
+        Self::adjust_output_type(&t, &self.settings)?;
         // SAFETY: valid transform and type.
         unsafe { self.transform.SetOutputType(self.out_id, &t, 0) }
-            .ctx("SetOutputType(renegotiate)")
+            .ctx("SetOutputType(renegotiate)")?;
+        tracing::debug!(encoder = %self.name, "MFT output type renegotiated after stream change");
+        self.refresh_output_info()
     }
 
-    /// Pulls one output sample. `Ok(false)` when the MFT needs more input.
+    /// Pulls one output sample. `Ok(false)` when there was nothing to collect (the MFT needs
+    /// more input, or it changed its output format).
+    ///
+    /// Asynchronous MFTs allow exactly one `ProcessOutput` per `METransformHaveOutput` event —
+    /// any other call fails with `E_UNEXPECTED` (0x8000FFFF). After a stream change the MFT
+    /// sends a fresh `METransformHaveOutput`, so an async encoder must not retry here.
     fn pull_output(&mut self) -> Result<bool> {
-        for _ in 0..2 {
+        let attempts = if self.events.is_some() { 1 } else { 2 };
+        for _ in 0..attempts {
             let own = if self.provides_samples {
                 None
             } else {

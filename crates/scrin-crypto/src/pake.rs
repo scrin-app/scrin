@@ -59,6 +59,37 @@ impl Pairing {
             &Password::new(code.as_bytes()),
             &SpakeIdentity::new(&transcript),
         );
+        Self::started(state, msg, transcript, role)
+    }
+
+    /// Like [`Pairing::start`], but the SPAKE2 scalar is drawn from `entropy`
+    /// (expanded with BLAKE3) instead of the OS RNG. For runtimes that bring
+    /// their own CSPRNG (the browser's `crypto.getRandomValues`) and for
+    /// deterministic test vectors. `entropy` MUST be fresh and secret per
+    /// attempt; reusing it across codes leaks the password to an observer.
+    #[must_use]
+    pub fn start_with_entropy(
+        code: &str,
+        role: Role,
+        me: DeviceId,
+        peer: DeviceId,
+        entropy: &[u8; 32],
+    ) -> (Self, Vec<u8>) {
+        let transcript = binding(me, peer);
+        let (state, msg) = Spake2::<Ed25519Group>::start_symmetric_with_rng(
+            &Password::new(code.as_bytes()),
+            &SpakeIdentity::new(&transcript),
+            EntropyRng::new(entropy),
+        );
+        Self::started(state, msg, transcript, role)
+    }
+
+    fn started(
+        state: Spake2<Ed25519Group>,
+        msg: Vec<u8>,
+        transcript: Vec<u8>,
+        role: Role,
+    ) -> (Self, Vec<u8>) {
         (
             Self {
                 state,
@@ -156,6 +187,42 @@ fn binding(me: DeviceId, peer: DeviceId) -> Vec<u8> {
     v
 }
 
+/// A CSPRNG (BLAKE3 XOF) over caller-provided entropy, for `start_with_entropy`.
+struct EntropyRng(blake3::OutputReader);
+
+impl EntropyRng {
+    fn new(entropy: &[u8; 32]) -> Self {
+        let mut h = blake3::Hasher::new_derive_key("scrin pake entropy v1");
+        h.update(entropy);
+        Self(h.finalize_xof())
+    }
+}
+
+impl rand_core_06::RngCore for EntropyRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut b = [0u8; 4];
+        self.0.fill(&mut b);
+        u32::from_le_bytes(b)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut b = [0u8; 8];
+        self.0.fill(&mut b);
+        u64::from_le_bytes(b)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.0.fill(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand_core_06::Error> {
+        self.0.fill(dest);
+        Ok(())
+    }
+}
+
+impl rand_core_06::CryptoRng for EntropyRng {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +276,21 @@ mod tests {
         let _kc = pc.finish(&mh).expect("finish");
         // Host's own tag echoed back must not verify as the controller's.
         assert!(kh.verify_peer(&kh.confirmation()).is_err());
+    }
+
+    #[test]
+    fn entropy_start_is_deterministic_and_interoperates() {
+        let (h, c) = ids();
+        let (_, m1) = Pairing::start_with_entropy("ABCDEFGH", Role::Controller, c, h, &[7; 32]);
+        let (pc, m2) = Pairing::start_with_entropy("ABCDEFGH", Role::Controller, c, h, &[7; 32]);
+        assert_eq!(m1, m2);
+        let (_, m3) = Pairing::start_with_entropy("ABCDEFGH", Role::Controller, c, h, &[8; 32]);
+        assert_ne!(m1, m3);
+        // An OS-RNG host pairs with an entropy-seeded controller.
+        let (ph, mh) = Pairing::start("ABCDEFGH", Role::Host, h, c);
+        let kh = ph.finish(&m2).expect("host finish");
+        let kc = pc.finish(&mh).expect("controller finish");
+        kh.verify_peer(&kc.confirmation()).expect("controller tag");
+        kc.verify_peer(&kh.confirmation()).expect("host tag");
     }
 }

@@ -62,6 +62,10 @@ pub struct CoreConfig {
     pub relay_urls: Vec<String>,
     /// Bind 127.0.0.1 only, no relays, no address lookup (host tests).
     pub loopback_only: bool,
+    /// Rendezvous server (`https://…`, or `http://` on a private network) for
+    /// 9-digit scrin IDs: register + presence as host, signed resolve as controller.
+    /// `None` = tickets only.
+    pub server_url: Option<String>,
 }
 
 /// A fresh one-time code for the host screen.
@@ -75,10 +79,13 @@ pub struct CodeInfo {
 /// What the host shares with a controller (besides the code).
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct HostInfo {
-    /// Connect ticket: device id + current addresses.
+    /// Connect ticket `scrin:<hex id>?a=<ip:port>…&r=<relay>` (the desktop
+    /// engine's format): device id + current addresses.
     pub ticket: String,
     pub device_id: String,
     pub fingerprint: String,
+    /// 9-digit scrin ID once the rendezvous server registered this device.
+    pub scrin_id: Option<String>,
 }
 
 /// Parsed connect target.
@@ -239,6 +246,11 @@ pub struct SessionStats {
     pub frames: u64,
     pub frames_recovered: u64,
     pub frames_lost: u64,
+    /// Video frames per second over the last interval (received on the
+    /// controller, sent on the host).
+    pub fps: f32,
+    /// Media bitrate over the last interval (in on the controller, out on the host).
+    pub bitrate_bps: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -319,8 +331,14 @@ pub trait SessionListener: Send + Sync {
     fn on_permission_asked(&self, permission: SessionPermission);
     fn on_notice(&self, notice: Notice);
     fn on_stats(&self, stats: SessionStats);
+    /// Host: the rendezvous server registered this device under `scrin_id`
+    /// (also after each presence refresh that changed it).
+    fn on_registered(&self, scrin_id: String);
     fn on_video_config(&self, config: VideoConfigInfo);
-    fn on_video_frame(&self, data: Vec<u8>, keyframe: bool);
+    /// Controller: one complete access unit (H.264 Annex B), reassembled from
+    /// FEC shards. `pts_us` is the local arrival time in µs since the stream
+    /// started (monotonic; the wire carries no sender timestamp).
+    fn on_video_frame(&self, data: Vec<u8>, keyframe: bool, frame_id: u32, pts_us: u64);
     /// Host: the controller lost a frame; send a sync frame.
     fn on_keyframe_request(&self);
     /// Host: input from the controller (already checked against the Input permission).

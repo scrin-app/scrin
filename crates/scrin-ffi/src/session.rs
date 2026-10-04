@@ -1,10 +1,18 @@
 //! Session tasks: one tokio task per session drives the pure state machine from
-//! `scrin-session` with events from the Control stream, FFI commands and a tick.
+//! `scrin-session` with events from the peer, FFI commands and a tick.
 //!
-//! Control stream after the handshake: length-prefixed `scrin.v1.Envelope`s.
-//! A controller asks for an extra permission by sending `PermissionsUpdate`
-//! with the permissions it wants added; the host answers with the full
-//! granted set in its own `PermissionsUpdate`.
+//! The wire matches the desktop engine (`crates/scrin-engine`) so Android and
+//! Windows interoperate in both roles:
+//!
+//! - **Control stream** (opened by the handshake): length-prefixed
+//!   `scrin.v1.Envelope`s — `SessionRequest` (also used mid-session to ask
+//!   for one more permission), `SessionAccept`/`Reject`, `PermissionsUpdate`,
+//!   `SessionEnd`, `VideoConfig`, `KeyframeRequest`, `BitrateFeedback`,
+//!   `Ping`/`Pong`.
+//! - **Input stream** (`StreamKind::Input`, opened by the controller):
+//!   input envelopes only, so a burst of moves never delays control traffic.
+//! - **Datagrams**: one `scrin_media::fec` shard each (16-byte `ShardHeader`
+//!   + payload); the controller reassembles complete access units.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,7 +23,7 @@ use iroh::EndpointAddr;
 use scrin_crypto::identity::DeviceId;
 use scrin_crypto::sas::{EMOJI, Sas};
 use scrin_crypto::trust::Profile;
-use scrin_media::fec::{FrameEncoder, FrameReassembler, MediaKind};
+use scrin_media::fec::{FrameEncoder, FrameReassembler, MediaKind, ShardHeader};
 use scrin_net::datagram::{recv_datagram, send_datagram};
 use scrin_net::handshake::{
     ControlStream, HostCode, controller_auth_trusted, controller_pair, host_pair,
@@ -24,17 +32,18 @@ use scrin_net::{Connection, NetError, SendStream};
 use scrin_proto::v1::{self, envelope::Payload};
 use scrin_session::{
     ControllerAction, ControllerEnd, ControllerEvent, ControllerSession, ControllerStatus,
-    EndReason, HostAction, HostEvent, HostSession, PeerId, Permission, Permissions, Policy,
-    SessionKind,
+    EndReason, HostAction, HostEvent, HostSession, HostState, PeerId, Permission, Permissions,
+    Policy, SessionKind,
 };
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
+use crate::media::{ArrivalLog, FEEDBACK_INTERVAL, Meter, has_sps, micros_since};
 use crate::types::{
     EndInfo, EndKind, IncomingRequest, Notice, RemoteInput, SasInfo, ScrinError, SessionListener,
     SessionPermission, SessionState, SessionStats, VideoConfigInfo, perms_to_ffi,
 };
-use crate::{Shared, lock, wire};
+use crate::{Shared, Target, lock, wire};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const TICK: Duration = Duration::from_millis(250);
@@ -63,6 +72,7 @@ pub(crate) enum Cmd {
     Input(RemoteInput),
     VideoConfig(VideoConfigInfo),
     RequestKeyframe,
+    Feedback(v1::BitrateFeedback),
     End { report: bool },
 }
 
@@ -81,7 +91,11 @@ pub(crate) struct Session {
     cmd_rx: Mutex<Option<UnboundedReceiver<Cmd>>>,
     granted: AtomicU32,
     media: Mutex<Option<MediaTx>>,
+    /// Host: SPS/PPS from the encoder, prepended to keyframes that lack them
+    /// (Android encoders emit them once, as a `CODEC_CONFIG` buffer).
+    codec_config: Mutex<Vec<u8>>,
     stats: Mutex<SessionStats>,
+    meter: Mutex<Meter>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
     ended: AtomicBool,
 }
@@ -97,7 +111,9 @@ impl Session {
             cmd_rx: Mutex::new(Some(rx)),
             granted: AtomicU32::new(0),
             media: Mutex::new(None),
+            codec_config: Mutex::new(Vec::new()),
             stats: Mutex::new(SessionStats::default()),
+            meter: Mutex::new(Meter::default()),
             tasks: Mutex::new(Vec::new()),
             ended: AtomicBool::new(false),
         })
@@ -173,6 +189,9 @@ impl Session {
     }
 
     pub(crate) fn send_video_config(&self, c: VideoConfigInfo) -> Result<(), ScrinError> {
+        if self.role == Role::Host {
+            lock(&self.codec_config).clone_from(&c.codec_config);
+        }
         self.send_cmd(Role::Host, Cmd::VideoConfig(c))
     }
 
@@ -180,8 +199,8 @@ impl Session {
         self.send_cmd(Role::Controller, Cmd::RequestKeyframe)
     }
 
-    /// Shards one encoded frame into datagrams. Frames are dropped (not queued)
-    /// while View is not granted or the path rejects a datagram.
+    /// Shards one encoded access unit into datagrams. Frames are dropped (not
+    /// queued) while View is not granted or the path rejects a datagram.
     pub(crate) fn send_video_frame(&self, data: &[u8], keyframe: bool) -> Result<(), ScrinError> {
         if self.role != Role::Host {
             return Err(ScrinError::state("only the host sends video"));
@@ -189,6 +208,18 @@ impl Session {
         if !self.granted().contains(Permission::View) {
             return Ok(());
         }
+        // A decoder joining at this keyframe (Windows openh264, a MediaCodec
+        // reconfigured after a resolution change) needs SPS/PPS in band.
+        let with_config;
+        let data = {
+            let cfg = lock(&self.codec_config);
+            if keyframe && !cfg.is_empty() && !has_sps(data) {
+                with_config = [cfg.as_slice(), data].concat();
+                with_config.as_slice()
+            } else {
+                data
+            }
+        };
         let mut media = lock(&self.media);
         let Some(m) = media.as_mut() else {
             return Ok(());
@@ -199,19 +230,22 @@ impl Session {
             .encoder
             .encode(id, keyframe, data)
             .map_err(|e| ScrinError::input(e.to_string()))?;
-        let mut sent = 0u64;
+        let mut sent = 0usize;
         for shard in shards {
             let bytes = shard.to_bytes();
-            let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+            let len = bytes.len();
             match send_datagram(&m.conn, Bytes::from(bytes)) {
                 Ok(()) => sent += len,
                 Err(NetError::DatagramTooLarge { .. } | NetError::DatagramsUnsupported) => {}
                 Err(e) => return Err(e.into()),
             }
         }
-        let mut st = lock(&self.stats);
-        st.frames += 1;
-        st.bytes_out = st.bytes_out.saturating_add(sent);
+        drop(media);
+        let mut meter = lock(&self.meter);
+        meter.add_frame();
+        meter.add_bytes(sent);
+        drop(meter);
+        lock(&self.stats).frames += 1;
         Ok(())
     }
 
@@ -238,10 +272,13 @@ impl Session {
     }
 
     fn emit_stats(&self, conn: &Connection) {
+        let (fps, bps) = lock(&self.meter).rates(Instant::now());
         let mut st = lock(&self.stats).clone();
         let qs = conn.stats();
         st.bytes_in = qs.udp_rx.bytes;
         st.bytes_out = qs.udp_tx.bytes;
+        st.fps = fps;
+        st.bitrate_bps = bps;
         let paths = conn.paths();
         if let Some(p) = paths.iter().find(iroh::endpoint::Path::is_selected) {
             st.rtt_ms = u32::try_from(p.rtt().as_millis()).unwrap_or(u32::MAX);
@@ -360,6 +397,9 @@ struct HostCtx<'a> {
     conn: &'a Connection,
     peer: DeviceId,
     controller_name: String,
+    t0: Instant,
+    /// Encoder config that arrived before Accept; sent right after it.
+    pending_video: Option<VideoConfigInfo>,
 }
 
 async fn host_flow(shared: Arc<Shared>, s: Arc<Session>, conn: Connection, code: Arc<HostCode>) {
@@ -381,7 +421,8 @@ async fn host_flow(shared: Arc<Shared>, s: Arc<Session>, conn: Connection, code:
     s.listener.on_sas(sas_info(out.sas));
     let ControlStream { mut send, recv, .. } = out.control;
     let (tx, mut ctl_rx) = mpsc::unbounded_channel();
-    s.track(wire::spawn_reader(recv, tx));
+    s.track(wire::spawn_reader(recv, tx.clone()));
+    s.track(tokio::spawn(wire::accept_input_streams(conn.clone(), tx)));
 
     let mut ctx = HostCtx {
         shared: &shared,
@@ -389,56 +430,76 @@ async fn host_flow(shared: Arc<Shared>, s: Arc<Session>, conn: Connection, code:
         conn: &conn,
         peer: out.peer,
         controller_name: String::new(),
+        t0: Instant::now(),
+        pending_video: None,
     };
     let mut hs = HostSession::new(Policy::default());
-    let t0 = Instant::now();
     let mut tick = tokio::time::interval(TICK);
     let mut ticks = 0u32;
     loop {
         let acts = tokio::select! {
             msg = ctl_rx.recv() => {
-                let now = ms_since(t0);
+                let now = ms_since(ctx.t0);
                 match msg.flatten() {
                     None => hs.handle(now, HostEvent::PeerDisconnected),
-                    Some(p) => host_on_payload(&mut ctx, &mut hs, now, p),
+                    Some(p) => host_on_payload(&mut ctx, &mut hs, &mut send, p).await,
                 }
             }
-            c = cmds.recv() => {
-                let now = ms_since(t0);
-                match c {
-                    None => hs.handle(now, HostEvent::UserStop),
-                    Some(Cmd::VideoConfig(cfg)) => {
-                        if !hs.granted().is_empty() {
-                            let _ = wire::send(&mut send, wire::video_config_to_wire(cfg)).await;
-                        }
-                        Vec::new()
-                    }
-                    Some(c) => host_cmd_event(&c).map_or_else(Vec::new, |ev| hs.handle(now, ev)),
-                }
-            }
+            c = cmds.recv() => host_on_cmd(&mut ctx, &mut hs, &mut send, c).await,
             _ = tick.tick() => {
                 ticks = ticks.wrapping_add(1);
                 if ticks.is_multiple_of(STATS_EVERY_TICKS) && !hs.granted().is_empty() {
                     s.emit_stats(&conn);
                 }
-                hs.on_tick(ms_since(t0))
+                hs.on_tick(ms_since(ctx.t0))
             }
         };
-        if let Some(end) = host_apply(&ctx, &hs, &mut send, ms_since(t0), acts).await {
+        if let Some(end) = host_apply(&mut ctx, &hs, &mut send, acts).await {
             s.finish(&shared, end, Some(&conn));
             return;
         }
     }
 }
 
-fn host_on_payload(
+async fn host_on_cmd(
     ctx: &mut HostCtx<'_>,
     hs: &mut HostSession,
-    now: u64,
+    send: &mut SendStream,
+    c: Option<Cmd>,
+) -> Vec<HostAction> {
+    let now = ms_since(ctx.t0);
+    match c {
+        None => hs.handle(now, HostEvent::UserStop),
+        Some(Cmd::VideoConfig(cfg)) => {
+            if hs.granted().is_empty() {
+                ctx.pending_video = Some(cfg);
+            } else {
+                let _ = wire::send(send, wire::video_config_to_wire(cfg)).await;
+            }
+            Vec::new()
+        }
+        Some(c) => host_cmd_event(&c).map_or_else(Vec::new, |ev| hs.handle(now, ev)),
+    }
+}
+
+async fn host_on_payload(
+    ctx: &mut HostCtx<'_>,
+    hs: &mut HostSession,
+    send: &mut SendStream,
     p: Payload,
 ) -> Vec<HostAction> {
+    let now = ms_since(ctx.t0);
     match p {
         Payload::SessionRequest(r) => {
+            let requested = wire::perms_from_wire(&r.requested);
+            // Mid-session, a request asks for more permissions (desktop engine).
+            if matches!(hs.state(), HostState::Active { .. }) {
+                let wanted = requested - hs.granted();
+                return wanted
+                    .iter()
+                    .flat_map(|perm| hs.handle(now, HostEvent::PeerRequestPermission(perm)))
+                    .collect();
+            }
             ctx.controller_name = r.controller_name.chars().take(64).collect();
             hs.handle(
                 now,
@@ -446,7 +507,7 @@ fn host_on_payload(
                     peer: PeerId(ctx.peer.0),
                     // No account verification yet: every quick connect is anonymous (ADR-0009).
                     kind: SessionKind::Anonymous,
-                    requested: wire::perms_from_wire(&r.requested),
+                    requested,
                 },
             )
         }
@@ -462,6 +523,17 @@ fn host_on_payload(
             ctx.s.listener.on_keyframe_request();
             Vec::new()
         }
+        Payload::Ping(req) => {
+            let t = micros_since(ctx.t0);
+            let answer = v1::Pong {
+                seq: req.seq,
+                t1_us: req.t1_us,
+                t2_us: t,
+                t3_us: t,
+            };
+            let _ = wire::send(send, Payload::Pong(answer)).await;
+            Vec::new()
+        }
         p if wire::is_input(&p) => {
             if hs.granted().contains(Permission::Input) {
                 for e in wire::input_from_wire(&p) {
@@ -470,6 +542,7 @@ fn host_on_payload(
             }
             Vec::new()
         }
+        // BitrateFeedback: the Android encoder runs CBR at a fixed target.
         _ => Vec::new(),
     }
 }
@@ -483,20 +556,51 @@ fn host_cmd_event(c: &Cmd) -> Option<HostEvent> {
         Cmd::AddTrust => HostEvent::UserAddTrust,
         Cmd::End { report: true } => HostEvent::StopAndReport,
         Cmd::End { report: false } => HostEvent::UserStop,
-        Cmd::RequestPermission(_) | Cmd::Input(_) | Cmd::RequestKeyframe | Cmd::VideoConfig(_) => {
+        Cmd::RequestPermission(_)
+        | Cmd::Input(_)
+        | Cmd::RequestKeyframe
+        | Cmd::VideoConfig(_)
+        | Cmd::Feedback(_) => {
             return None;
         }
     })
 }
 
-async fn host_apply(
-    ctx: &HostCtx<'_>,
+async fn host_send_accept(
+    ctx: &mut HostCtx<'_>,
     hs: &HostSession,
     send: &mut SendStream,
-    now: u64,
+    p: Permissions,
+) {
+    let max_ms = hs.kind().and_then(|k| hs.policy().max_duration_ms(k));
+    let accept = v1::SessionAccept {
+        granted: wire::perms_to_wire(p),
+        displays: Vec::new(),
+        max_duration_s: max_ms.map_or(0, |m| u32::try_from(m / 1000).unwrap_or(u32::MAX)),
+    };
+    let _ = wire::send(send, Payload::SessionAccept(accept)).await;
+    if let Some(cfg) = ctx.pending_video.take() {
+        let _ = wire::send(send, wire::video_config_to_wire(cfg)).await;
+    }
+    if let Ok(encoder) = FrameEncoder::new(MediaKind::Video, FEC_PARITY) {
+        *lock(&ctx.s.media) = Some(MediaTx {
+            conn: ctx.conn.clone(),
+            encoder,
+            next_frame: 0,
+        });
+    }
+    ctx.s.set_granted(p);
+    ctx.s.listener.on_state(SessionState::Active);
+}
+
+async fn host_apply(
+    ctx: &mut HostCtx<'_>,
+    hs: &HostSession,
+    send: &mut SendStream,
     acts: Vec<HostAction>,
 ) -> Option<EndInfo> {
-    let l = &ctx.s.listener;
+    let now = ms_since(ctx.t0);
+    let l = Arc::clone(&ctx.s.listener);
     let mut end: Option<EndInfo> = None;
     for a in acts {
         match a {
@@ -521,25 +625,7 @@ async fn host_apply(
                     expires_in_ms: expires_at.saturating_sub(now),
                 });
             }
-            HostAction::SendAccept(p) => {
-                let max_ms = hs.kind().and_then(|k| hs.policy().max_duration_ms(k));
-                let accept = v1::SessionAccept {
-                    granted: wire::perms_to_wire(p),
-                    displays: Vec::new(),
-                    max_duration_s: max_ms
-                        .map_or(0, |m| u32::try_from(m / 1000).unwrap_or(u32::MAX)),
-                };
-                let _ = wire::send(send, Payload::SessionAccept(accept)).await;
-                if let Ok(encoder) = FrameEncoder::new(MediaKind::Video, FEC_PARITY) {
-                    *lock(&ctx.s.media) = Some(MediaTx {
-                        conn: ctx.conn.clone(),
-                        encoder,
-                        next_frame: 0,
-                    });
-                }
-                ctx.s.set_granted(p);
-                l.on_state(SessionState::Active);
-            }
+            HostAction::SendAccept(p) => host_send_accept(ctx, hs, send, p).await,
             HostAction::SendReject { reason, .. } => {
                 let rej = v1::SessionReject {
                     reason: wire::reject_to_wire(reason).into(),
@@ -596,7 +682,7 @@ async fn host_apply(
 pub(crate) async fn controller_flow(
     shared: Arc<Shared>,
     s: Arc<Session>,
-    addr: EndpointAddr,
+    target: Target,
     code: String,
 ) {
     let Some(mut cmds) = s.take_cmds() else {
@@ -610,6 +696,7 @@ pub(crate) async fn controller_flow(
 
     // Boxed: iroh's connect future is ~23 KB, too large to keep on the task stack.
     let dial = Box::pin(async {
+        let addr = resolve_target(&shared, target).await?;
         let ep = shared.endpoint().await?;
         tokio::time::timeout(CONNECT_TIMEOUT, ep.connect(addr))
             .await
@@ -678,12 +765,43 @@ pub(crate) async fn controller_flow(
     .await;
 }
 
+/// A ticket/hex id dials directly; a 9-digit scrin ID goes through the server.
+async fn resolve_target(shared: &Shared, target: Target) -> Result<EndpointAddr, ScrinError> {
+    match target {
+        Target::Addr(a) => Ok(a),
+        Target::ScrinId(id) => {
+            let server = shared
+                .server
+                .as_ref()
+                .ok_or_else(|| ScrinError::input("a scrin ID needs a server; use a link"))?;
+            Ok(server.resolve(&shared.identity, &id).await?)
+        }
+    }
+}
+
 struct Running {
     cs: ControllerSession,
     cmds: UnboundedReceiver<Cmd>,
     t0: Instant,
     req: v1::SessionRequest,
     first: Vec<ControllerAction>,
+}
+
+/// Lazily opened Input stream of a controller session.
+struct InputOut {
+    conn: Connection,
+    tx: Option<UnboundedSender<Payload>>,
+}
+
+impl InputOut {
+    fn send(&mut self, s: &Session, p: Payload) {
+        let tx = self.tx.get_or_insert_with(|| {
+            let (tx, rx) = mpsc::unbounded_channel();
+            s.track(tokio::spawn(wire::input_writer(self.conn.clone(), rx)));
+            tx
+        });
+        let _ = tx.send(p);
+    }
 }
 
 async fn controller_run(
@@ -707,7 +825,10 @@ async fn controller_run(
     if let Some(end) = controller_apply(s, &cs, Some((&mut send, &req)), first).await {
         return s.finish(shared, end, Some(conn));
     }
-
+    let mut input = InputOut {
+        conn: conn.clone(),
+        tx: None,
+    };
     let mut tick = tokio::time::interval(TICK);
     let mut ticks = 0u32;
     loop {
@@ -720,25 +841,7 @@ async fn controller_run(
                 }
             }
             c = cmds.recv() => {
-                let now = ms_since(t0);
-                match c {
-                    None | Some(Cmd::End { .. }) => cs.handle(now, ControllerEvent::Cancel),
-                    Some(Cmd::RequestPermission(p)) => {
-                        cs.handle(now, ControllerEvent::RequestPermission(p))
-                    }
-                    Some(Cmd::Input(i)) => {
-                        if cs.granted().contains(Permission::Input) {
-                            let _ = wire::send(&mut send, wire::input_to_wire(i)).await;
-                        }
-                        Vec::new()
-                    }
-                    Some(Cmd::RequestKeyframe) => {
-                        let kr = v1::KeyframeRequest { stream_id: 0, last_good_frame_id: 0 };
-                        let _ = wire::send(&mut send, Payload::KeyframeRequest(kr)).await;
-                        Vec::new()
-                    }
-                    Some(_) => Vec::new(),
-                }
+                controller_on_cmd(s, &mut cs, &mut send, &mut input, ms_since(t0), c).await
             }
             _ = tick.tick() => {
                 ticks = ticks.wrapping_add(1);
@@ -752,6 +855,39 @@ async fn controller_run(
             s.finish(shared, end, Some(conn));
             return;
         }
+    }
+}
+
+async fn controller_on_cmd(
+    s: &Session,
+    cs: &mut ControllerSession,
+    send: &mut SendStream,
+    input: &mut InputOut,
+    now: u64,
+    c: Option<Cmd>,
+) -> Vec<ControllerAction> {
+    match c {
+        None | Some(Cmd::End { .. }) => cs.handle(now, ControllerEvent::Cancel),
+        Some(Cmd::RequestPermission(p)) => cs.handle(now, ControllerEvent::RequestPermission(p)),
+        Some(Cmd::Input(i)) => {
+            if cs.granted().contains(Permission::Input) {
+                input.send(s, wire::input_to_wire(i));
+            }
+            Vec::new()
+        }
+        Some(Cmd::RequestKeyframe) => {
+            let kr = v1::KeyframeRequest {
+                stream_id: 0,
+                last_good_frame_id: 0,
+            };
+            let _ = wire::send(send, Payload::KeyframeRequest(kr)).await;
+            Vec::new()
+        }
+        Some(Cmd::Feedback(fb)) => {
+            let _ = wire::send(send, Payload::BitrateFeedback(fb)).await;
+            Vec::new()
+        }
+        Some(_) => Vec::new(),
     }
 }
 
@@ -810,11 +946,14 @@ async fn controller_apply(
                 }
             }
             ControllerAction::SendPermissionRequest(p) => {
-                if let Some((w, _)) = ctl.as_mut() {
-                    let upd = v1::PermissionsUpdate {
-                        granted: wire::perms_to_wire(Permissions::only(p)),
+                // Same shape as the desktop engine: a SessionRequest naming the extra permission.
+                if let Some((w, req)) = ctl.as_mut() {
+                    let r = v1::SessionRequest {
+                        requested: wire::perms_to_wire(Permissions::only(p)),
+                        controller_name: req.controller_name.clone(),
+                        unattended: false,
                     };
-                    let _ = wire::send(w, Payload::PermissionsUpdate(upd)).await;
+                    let _ = wire::send(w, Payload::SessionRequest(r)).await;
                 }
             }
             ControllerAction::ShowPermissions(p) => s.set_granted(p),
@@ -838,27 +977,47 @@ async fn controller_apply(
     None
 }
 
-/// Controller: datagrams → FEC reassembly → decoder callback.
+/// Controller: datagrams → FEC reassembly → complete access units to Kotlin;
+/// arrivals → `BitrateFeedback` every 50 ms; losses → keyframe requests.
 async fn media_rx(conn: Connection, s: Arc<Session>) {
+    let started = Instant::now();
     let mut r = FrameReassembler::default();
+    let mut log = ArrivalLog::default();
     let mut lost_seen = 0u64;
     let mut last_kf_request: Option<Instant> = None;
-    while let Ok(d) = recv_datagram(&conn).await {
-        if let Ok(Some(f)) = r.push(&d) {
-            s.listener.on_video_frame(f.data, f.keyframe);
-        }
-        let rs = r.stats();
-        {
-            let mut st = lock(&s.stats);
-            st.frames = rs.completed;
-            st.frames_recovered = rs.recovered;
-            st.frames_lost = rs.lost;
-        }
-        if rs.lost > lost_seen {
-            lost_seen = rs.lost;
-            if last_kf_request.is_none_or(|t| t.elapsed() >= KEYFRAME_REQUEST_GAP) {
-                last_kf_request = Some(Instant::now());
-                let _ = s.cmd.send(Cmd::RequestKeyframe);
+    let mut tick = tokio::time::interval(FEEDBACK_INTERVAL);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            d = recv_datagram(&conn) => {
+                let Ok(d) = d else { break };
+                lock(&s.meter).add_bytes(d.len());
+                let Ok(header) = ShardHeader::decode(&d) else { continue };
+                log.record(&header, micros_since(started), d.len());
+                if let Ok(Some(f)) = r.push(&d) {
+                    lock(&s.meter).add_frame();
+                    s.listener
+                        .on_video_frame(f.data, f.keyframe, f.frame_id, micros_since(started));
+                }
+            }
+            _ = tick.tick() => {
+                let rs = r.stats();
+                {
+                    let mut st = lock(&s.stats);
+                    st.frames = rs.completed;
+                    st.frames_recovered = rs.recovered;
+                    st.frames_lost = rs.lost;
+                }
+                if let Some(fb) = log.take_report(0) && s.cmd.send(Cmd::Feedback(fb)).is_err() {
+                    break;
+                }
+                if rs.lost > lost_seen {
+                    lost_seen = rs.lost;
+                    if last_kf_request.is_none_or(|t| t.elapsed() >= KEYFRAME_REQUEST_GAP) {
+                        last_kf_request = Some(Instant::now());
+                        let _ = s.cmd.send(Cmd::RequestKeyframe);
+                    }
+                }
             }
         }
     }

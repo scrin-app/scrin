@@ -7,7 +7,27 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+scrin-crypto.workspace = true
+scrin-media.workspace = true
+wasm-bindgen = "0.2.129"
+zeroize.workspace = true
+
+# The browser supplies randomness through getrandom's JS backends: scrin-crypto
+# uses 0.3, spake2's rand_core 0.6 pulls 0.2, RustCrypto's crypto-common 0.4.
+# Each only needs its feature on wasm32-unknown-unknown (no RUSTFLAGS cfg).
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+
+[dev-dependencies]
+scrin-proto.workspace = true
+data-encoding.workspace = true
+serde_json = "1"
 
 [lints]
 workspace = true

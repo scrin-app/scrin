@@ -6,7 +6,7 @@
 
 <!-- Ids from docs/tracker.csv this PR advances or closes, e.g. S1-004, X-012. -->
 
-- 
+-
 
 ## How it was verified
 

@@ -34,7 +34,17 @@ object Format {
 
     fun isCompleteCode(display: String): Boolean = display.count { it in CODE_ALPHABET } == CODE_LEN && display.length == CODE_LEN + 1
 
-    /** `scrin1abcdefgh…uvwxyz` for long tickets; short strings are returned as-is. */
+    /**
+     * Caret position in [codeInput]`(raw)` matching caret [rawCaret] in [raw]: the same number of
+     * code symbols sit before it, and it lands after the dash once the fifth symbol is typed.
+     */
+    fun codeCaret(raw: String, rawCaret: Int): Int {
+        val before = raw.take(rawCaret.coerceIn(0, raw.length)).uppercase(Locale.ROOT).count { it in CODE_ALPHABET }.coerceAtMost(CODE_LEN)
+        val formatted = codeInput(raw)
+        return (if (before > 4) before + 1 else before).coerceAtMost(formatted.length)
+    }
+
+    /** `scrin:abcdef…uvwxyz` for long tickets; short strings are returned as-is. */
     fun shortTicket(ticket: String, head: Int = 12, tail: Int = 6): String =
         if (ticket.length <= head + tail + 1) ticket else ticket.take(head) + "…" + ticket.takeLast(tail)
 
@@ -48,15 +58,24 @@ object ConnectForm {
     enum class Problem { TARGET_EMPTY, TARGET_INVALID, CODE_INCOMPLETE }
 
     private val HEX_ID = Regex("^[0-9a-fA-F]{64}$")
+    /** Compact legacy form. */
     private val TICKET = Regex("^scrin1[a-z2-7]{60,}$")
+    /** Desktop-engine form `scrin:<64 hex>[?a=ip:port&r=url…]`. */
+    private val TICKET_URI = Regex("^scrin:[0-9a-fA-F]{64}(\\?\\S*)?$")
+    private val SCRIN_ID = Regex("^\\d{9}$")
 
-    fun normalizeTarget(raw: String): String = raw.filterNot { it.isWhitespace() }
+    /** Whitespace dropped; a scrin ID typed as `123 456 789` / `123-456-789` becomes 9 digits. */
+    fun normalizeTarget(raw: String): String {
+        val t = raw.filterNot { it.isWhitespace() }
+        val digits = t.replace("-", "")
+        return if (SCRIN_ID.matches(digits)) digits else t
+    }
 
     fun validate(target: String, code: String): Problem? {
         val t = normalizeTarget(target)
         return when {
             t.isEmpty() -> Problem.TARGET_EMPTY
-            !(HEX_ID.matches(t) || TICKET.matches(t)) -> Problem.TARGET_INVALID
+            !(HEX_ID.matches(t) || TICKET.matches(t) || TICKET_URI.matches(t) || SCRIN_ID.matches(t)) -> Problem.TARGET_INVALID
             !Format.isCompleteCode(code) -> Problem.CODE_INCOMPLETE
             else -> null
         }

@@ -26,9 +26,12 @@ data class CodeState(val display: String, val expiresAtMs: Long, val totalMs: Lo
 /** Media/input endpoints owned by Android services; set while they run. */
 interface MediaSinks {
     fun onVideoConfig(config: VideoConfigInfo) {}
-    fun onVideoFrame(data: ByteArray, keyframe: Boolean) {}
+    /** One complete H.264 Annex-B access unit; `ptsUs` is the local arrival time. */
+    fun onVideoFrame(data: ByteArray, keyframe: Boolean, ptsUs: Long) {}
     fun onKeyframeRequest() {}
     fun onInput(event: RemoteInput) {}
+    /** The session is over (either side); release capture/decoder resources. */
+    fun onSessionEnded() {}
 }
 
 /**
@@ -50,6 +53,10 @@ class SessionHub(
 
     private val _ticket = MutableStateFlow<String?>(null)
     val ticket: StateFlow<String?> = _ticket.asStateFlow()
+
+    /** 9-digit scrin ID once a configured rendezvous server registered this device. */
+    private val _scrinId = MutableStateFlow<String?>(null)
+    val scrinId: StateFlow<String?> = _scrinId.asStateFlow()
 
     val deviceId: String get() = core.deviceId
     val fingerprint: String get() = core.fingerprint
@@ -102,8 +109,16 @@ class SessionHub(
         runCatching { core.sendVideoFrame(data, keyframe) }
     }
 
-    /** Hot path: touch events. */
-    fun sendInput(e: RemoteInput) = call { sendInput(e) }
+    /**
+     * Hot path: touch, mouse and key events. Called in order on the caller's thread: the
+     * core only queues the event (no I/O), and launching one coroutine per event could
+     * reorder a press and its release.
+     */
+    fun sendInput(e: RemoteInput) {
+        runCatching { core.sendInput(e) }
+    }
+
+    fun sendInputs(events: List<RemoteInput>) = events.forEach(::sendInput)
     fun requestKeyframe() = call { requestKeyframe() }
 
     fun dismissEnded() = _ui.update { it.copy(ended = null, notice = null, error = null, state = if (it.state == SessionState.ENDED) null else it.state, role = if (it.state == SessionState.ENDED) null else it.role) }
@@ -121,13 +136,19 @@ class SessionHub(
     override fun onPermissionAsked(permission: SessionPermission) = dispatch(SessionEvent.Asked(permission))
     override fun onNotice(notice: Notice) = dispatch(SessionEvent.NoticeEv(notice))
     override fun onStats(stats: SessionStats) = dispatch(SessionEvent.Stats(stats))
+    override fun onRegistered(scrinId: String) { _scrinId.value = scrinId }
     override fun onVideoConfig(config: VideoConfigInfo) {
         dispatch(SessionEvent.Video(config))
         viewerSinks?.onVideoConfig(config)
     }
-    override fun onVideoFrame(data: ByteArray, keyframe: Boolean) { viewerSinks?.onVideoFrame(data, keyframe) }
+    override fun onVideoFrame(data: ByteArray, keyframe: Boolean, frameId: UInt, ptsUs: ULong) {
+        viewerSinks?.onVideoFrame(data, keyframe, ptsUs.toLong())
+    }
     override fun onKeyframeRequest() { hostSinks?.onKeyframeRequest() }
     override fun onInput(event: RemoteInput) { hostSinks?.onInput(event) }
-    override fun onEnded(end: EndInfo) = dispatch(SessionEvent.Ended(end))
+    override fun onEnded(end: EndInfo) {
+        dispatch(SessionEvent.Ended(end))
+        hostSinks?.onSessionEnded()
+    }
     override fun onError(message: String) = dispatch(SessionEvent.Error(message))
 }

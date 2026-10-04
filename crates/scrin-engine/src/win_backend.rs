@@ -11,6 +11,7 @@ use std::time::Duration;
 use scrin_proto::v1;
 use scrin_win::win::capture_dxgi::{DxgiCapture, virtual_desktop};
 use scrin_win::win::decode_openh264::OpenH264Decoder;
+use scrin_win::win::encode_openh264::OpenH264Encoder;
 use scrin_win::win::input::SendInputInjector;
 use scrin_win::win::{EncoderSettings as WinSettings, best_encoder};
 use scrin_win::{
@@ -78,6 +79,22 @@ impl Capturer for WinCapturer {
 struct WinEncoder {
     inner: Box<dyn scrin_win::VideoEncoder>,
     settings: EncoderSettings,
+    /// Open size, for re-opening a software encoder.
+    width: u32,
+    height: u32,
+    /// Already on openh264 (a hardware MFT failed while encoding).
+    software: bool,
+}
+
+impl WinEncoder {
+    fn win_settings(&self) -> WinSettings {
+        WinSettings {
+            width: self.width,
+            height: self.height,
+            fps: self.settings.fps,
+            bitrate: self.settings.bitrate_bps,
+        }
+    }
 }
 
 impl std::fmt::Debug for WinEncoder {
@@ -126,14 +143,25 @@ impl VideoEncoder for WinEncoder {
             cursor: None,
             discontinuity: false,
         };
-        Ok(self
-            .inner
-            .encode(&f, force_keyframe)
-            .map_err(|e| err(&e))?
-            .map(|e| EncodedFrame {
-                data: e.data,
-                keyframe: e.keyframe,
-            }))
+        let out = match self.inner.encode(&f, force_keyframe) {
+            Ok(o) => o,
+            Err(e) if !self.software => {
+                // Some hardware MFTs (Intel Quick Sync async MFT seen on a
+                // laptop: ProcessOutput 0x8000FFFF on the first frame) open
+                // fine and then fail. Switch to openh264 for the rest of the
+                // stream; the new encoder starts with a keyframe.
+                tracing::warn!(error = %e, encoder = self.inner.name(), "hardware encoder failed; switching to openh264");
+                self.inner =
+                    Box::new(OpenH264Encoder::new(self.win_settings()).map_err(|e| err(&e))?);
+                self.software = true;
+                self.inner.encode(&f, true).map_err(|e| err(&e))?
+            }
+            Err(e) => return Err(err(&e)),
+        };
+        Ok(out.map(|e| EncodedFrame {
+            data: e.data,
+            keyframe: e.keyframe,
+        }))
     }
 }
 
@@ -208,9 +236,10 @@ impl MediaBackend for WinBackend {
     }
 
     fn open_encoder(&self, config: EncoderConfig) -> Result<Box<dyn VideoEncoder>, BackendError> {
+        let (width, height) = (config.width & !1, config.height & !1);
         let inner = best_encoder(WinSettings {
-            width: config.width & !1,
-            height: config.height & !1,
+            width,
+            height,
             fps: config.settings.fps,
             bitrate: config.settings.bitrate_bps,
         })
@@ -218,6 +247,9 @@ impl MediaBackend for WinBackend {
         Ok(Box::new(WinEncoder {
             inner,
             settings: config.settings,
+            width,
+            height,
+            software: false,
         }))
     }
 

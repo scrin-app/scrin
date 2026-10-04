@@ -9,6 +9,7 @@ import type {
   SessionEngine,
   SpecialKey,
 } from '../platform';
+import { createLazyWebEngine } from '../platform/web/lazy-engine';
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -238,9 +239,67 @@ function detectOs(): string {
   return 'Unknown';
 }
 
-export function createWebHost(opts: MockEngineOptions & { version?: string } = {}): ScrinHost {
+export interface WebHostOptions extends MockEngineOptions {
+  version?: string;
+  /**
+   * Base URL of a scrin server with the browser gateway. When set, sessions
+   * run for real (WebTransport/WebSocket + wasm + WebCodecs); when absent the
+   * mock engine drives the UI (tests, demo). Defaults to
+   * {@link configuredServerUrl}.
+   */
+  serverUrl?: string | undefined;
+  deviceName?: string;
+}
+
+/** Storage key of the configured scrin server URL. */
+const SERVER_URL_KEY = 'scrin.server';
+
+function validServerUrl(v: string | null | undefined): string | null {
+  if (!v) return null;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The scrin server this SPA talks to, from (in order) a `?server=` query
+ * parameter (remembered), `localStorage['scrin.server']`, or
+ * `<meta name="scrin-server" content="…">`. `null` = demo mode (mock engine).
+ */
+function configuredServerUrl(storage: KeyValueStorage): string | null {
+  if (typeof location !== 'undefined') {
+    const q = new URLSearchParams(location.search).get('server');
+    if (q === '' || q === 'demo') {
+      storage.remove(SERVER_URL_KEY);
+      return null;
+    }
+    const fromQuery = validServerUrl(q);
+    if (fromQuery) {
+      storage.set(SERVER_URL_KEY, fromQuery);
+      return fromQuery;
+    }
+  }
+  const stored = validServerUrl(storage.get(SERVER_URL_KEY));
+  if (stored) return stored;
+  if (typeof document === 'undefined') return null;
+  return validServerUrl(
+    document.querySelector('meta[name="scrin-server"]')?.getAttribute('content'),
+  );
+}
+
+export function createWebHost(opts: WebHostOptions = {}): ScrinHost {
   const storage = createWebStorage();
   const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const serverUrl = 'serverUrl' in opts ? opts.serverUrl : configuredServerUrl(storage);
+  const engine = serverUrl
+    ? createLazyWebEngine({
+        serverUrl,
+        ...(opts.deviceName ? { deviceName: opts.deviceName } : {}),
+      })
+    : createMockEngine(opts);
   return {
     platform: {
       kind: 'web',
@@ -250,7 +309,7 @@ export function createWebHost(opts: MockEngineOptions & { version?: string } = {
       canShare,
     },
     storage,
-    engine: createMockEngine(opts),
+    engine,
     async writeClipboard(text) {
       await navigator.clipboard.writeText(text);
     },

@@ -23,7 +23,7 @@
     <string name="home_connect_title">Control another device</string>
     <string name="home_connect_body">Enter the partner\'s link or ID and the one-time code shown on their screen.</string>
     <string name="home_partner_id">Partner link or ID</string>
-    <string name="home_partner_id_hint">A scrin link, or a 64-character hex ID</string>
+    <string name="home_partner_id_hint">A scrin link, a 9-digit scrin ID or a 64-character hex ID</string>
     <string name="home_code_field">One-time code</string>
     <string name="home_e2e_note">End-to-end encrypted. The code never leaves either device.</string>
     <string name="home_connect_action">Connect</string>
@@ -62,8 +62,22 @@
     <string name="viewer_mode_direct">Touch</string>
     <string name="viewer_keyboard">Keyboard</string>
     <string name="viewer_disconnect">Disconnect</string>
-    <string name="viewer_rtt">%1$d ms</string>
     <string name="viewer_type_here">Type to send</string>
+    <string name="viewer_stats">%1$s fps · %2$d ms · %3$s Mb/s</string>
+    <string name="viewer_path_direct">direct</string>
+    <string name="viewer_path_relay">relay</string>
+    <string name="key_esc">Esc</string>
+    <string name="key_tab">Tab</string>
+    <string name="key_ctrl">Ctrl</string>
+    <string name="key_alt">Alt</string>
+    <string name="key_win">Win</string>
+    <string name="key_left">←</string>
+    <string name="key_up">↑</string>
+    <string name="key_down">↓</string>
+    <string name="key_right">→</string>
+    <string name="key_backspace">⌫</string>
+    <string name="key_enter">Enter</string>
+    <string name="key_ctrl_alt_del">Ctrl+Alt+Del</string>
 
     <string name="host_title">Allow remote control</string>
     <string name="host_step_input">1 · Allow touch control</string>
@@ -144,6 +158,11 @@
     <string name="settings_relay_label">Relay URLs</string>
     <string name="settings_relay_invalid">Use https:// URLs separated by commas.</string>
     <string name="settings_relay_restart">Applied the next time scrin starts.</string>
+    <string name="settings_server">scrin server</string>
+    <string name="settings_server_body">Optional. With a server, this device gets a 9-digit scrin ID and you can connect to others by their ID. Without one, share links.</string>
+    <string name="settings_server_label">Server URL</string>
+    <string name="settings_server_invalid">Use an https:// URL (http:// only for a private network address).</string>
+    <string name="home_scrin_id">scrin ID: %1$s</string>
     <string name="settings_about">About</string>
 
     <string name="accent_lagoon">Lagoon (scrin)</string>

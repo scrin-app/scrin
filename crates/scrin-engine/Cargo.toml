@@ -29,10 +29,13 @@ zeroize.workspace = true
 blake3.workspace = true
 data-encoding.workspace = true
 getrandom = "0.3"
-# HTTP resolver for scrin IDs. rustls with ring (the provider iroh already
-# links); no aws-lc, so no cmake/nasm in the build.
+# Rendezvous client. rustls with ring (the provider iroh already links); no
+# aws-lc, so no cmake/nasm in the build. The TLS config is preconfigured with
+# webpki-roots, so the platform verifier reqwest links is never used (it
+# breaks on Android).
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+webpki-roots = "1.0.9"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
@@ -44,6 +47,14 @@ win = ["dep:scrin-win"]
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 getrandom = "0.3"
+# A real in-process rendezvous + relay + gateway for the end-to-end tests.
+scrin-server = { path = "../scrin-server" }
+# The browser's pairing/channel core, to prove the host interoperates with it.
+scrin-wasm = { path = "../scrin-wasm" }
+tokio-tungstenite = "0.29.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+png = "0.18.1"
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

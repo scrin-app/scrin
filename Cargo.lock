@@ -2226,9 +2226,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -5770,6 +5772,7 @@ dependencies = [
  "data-encoding",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "spake2",
@@ -5811,8 +5814,40 @@ dependencies = [
  "blake3",
  "bytes",
  "data-encoding",
+ "futures-util",
  "getrandom 0.3.4",
  "iroh",
+ "png 0.18.1",
+ "reqwest",
+ "rustls",
+ "scrin-crypto",
+ "scrin-media",
+ "scrin-net",
+ "scrin-proto",
+ "scrin-server",
+ "scrin-session",
+ "scrin-wasm",
+ "scrin-win",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "webpki-roots",
+ "windows",
+ "zeroize",
+]
+
+[[package]]
+name = "scrin-ffi"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "iroh",
+ "png 0.18.1",
  "reqwest",
  "rustls",
  "scrin-crypto",
@@ -5825,26 +5860,8 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
- "tracing",
- "windows",
- "zeroize",
-]
-
-[[package]]
-name = "scrin-ffi"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "data-encoding",
- "iroh",
- "scrin-crypto",
- "scrin-media",
- "scrin-net",
- "scrin-proto",
- "scrin-session",
- "thiserror 2.0.21",
- "tokio",
  "uniffi",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -5932,6 +5949,18 @@ dependencies = [
 [[package]]
 name = "scrin-wasm"
 version = "0.1.0"
+dependencies = [
+ "data-encoding",
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "getrandom 0.4.3",
+ "scrin-crypto",
+ "scrin-media",
+ "scrin-proto",
+ "serde_json",
+ "wasm-bindgen",
+ "zeroize",
+]
 
 [[package]]
 name = "scrin-win"

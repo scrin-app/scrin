@@ -163,6 +163,7 @@ fun SettingsScreen(
             NavRow(stringResource(R.string.restricted_title), onRestrictedGuide)
         }
         RelayCard(settings.relayUrls) { scope.launch { repo.setRelays(it) } }
+        ServerCard(settings.serverUrl) { scope.launch { repo.setServer(it) } }
         SectionCard {
             SectionTitle(stringResource(R.string.settings_about))
             NavRow(stringResource(R.string.about_title), onAbout)
@@ -173,6 +174,30 @@ fun SettingsScreen(
 @Composable
 private fun RelayCard(current: String, onSave: (String) -> Unit) {
     RelayCardBody(current, onSave)
+}
+
+/** Rendezvous server for 9-digit scrin IDs (register as host, resolve as controller). */
+@Composable
+private fun ServerCard(current: String, onSave: (String) -> Unit) {
+    var text by remember(current) { mutableStateOf(current) }
+    val valid = ro.dragoscatalin.scrin.data.ServerUrl.valid(text)
+    SectionCard {
+        SectionTitle(stringResource(R.string.settings_server))
+        Text(stringResource(R.string.settings_server_body), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text(stringResource(R.string.settings_server_label)) },
+            placeholder = { Text("https://scrin.example.org") },
+            isError = !valid,
+            supportingText = { Text(stringResource(if (valid) R.string.settings_relay_restart else R.string.settings_server_invalid)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(onClick = { onSave(text) }, enabled = valid && text != current, modifier = Modifier.heightIn(min = 48.dp)) {
+            Text(stringResource(R.string.action_save))
+        }
+    }
 }
 
 /** Per-app language: in-app picker on Android 13+, system locale settings before. */

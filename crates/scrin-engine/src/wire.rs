@@ -15,6 +15,7 @@ use scrin_session::{EndReason, Permission, Permissions, RejectReason};
 use tokio::sync::mpsc;
 
 use crate::backend::InputEvent;
+use crate::gw::{CONTROL_LANE, Seal};
 
 /// Largest control message we accept (cursor shapes are the biggest).
 pub(crate) const MAX_CONTROL_MSG: usize = 1024 * 1024;
@@ -128,19 +129,24 @@ pub(crate) enum Outgoing {
 }
 
 /// Writes queued envelopes; on [`Outgoing::Close`] or channel drop it
-/// finishes the stream and closes the connection.
+/// finishes the stream and closes the connection. With `seal` (gateway
+/// path) every frame is sealed on the Control lane.
 pub(crate) async fn writer_task(
     conn: Connection,
     mut send: SendStream,
     mut rx: mpsc::UnboundedReceiver<Outgoing>,
+    seal: Seal,
 ) {
+    let lane = CONTROL_LANE;
     while let Some(msg) = rx.recv().await {
         match msg {
             Outgoing::Env(e) => {
-                if write_frame(&mut send, &scrin_proto::encode_envelope(&e))
-                    .await
-                    .is_err()
-                {
+                let Some(bytes) =
+                    seal_frame(seal.as_deref(), lane, &scrin_proto::encode_envelope(&e))
+                else {
+                    break;
+                };
+                if write_frame(&mut send, &bytes).await.is_err() {
                     break;
                 }
             }
@@ -155,14 +161,39 @@ pub(crate) async fn writer_task(
     conn.close(0u32.into(), b"bye");
 }
 
+/// Plain bytes, or sealed on `lane` when a channel is set. `None` = sealing failed.
+pub(crate) fn seal_frame(
+    seal: Option<&crate::gw::Channel>,
+    lane: u32,
+    plain: &[u8],
+) -> Option<Vec<u8>> {
+    match seal {
+        None => Some(plain.to_vec()),
+        Some(c) => c.seal(lane, plain).ok(),
+    }
+}
+
+fn open_frame(seal: Option<&crate::gw::Channel>, lane: u32, bytes: Vec<u8>) -> Option<Vec<u8>> {
+    match seal {
+        None => Some(bytes),
+        Some(c) => c.open_stream_frame(lane, &bytes),
+    }
+}
+
 /// Reads envelopes until the stream ends; `on_msg(None)` signals the end.
+/// A frame that fails to open (gateway path) ends the stream.
 pub(crate) async fn reader_task(
     mut recv: RecvStream,
+    seal: Seal,
     mut on_msg: impl FnMut(Option<v1::Envelope>) + Send,
 ) {
+    let lane = CONTROL_LANE;
     while let Ok(Some(bytes)) =
         scrin_net::framing::read_frame_capped(&mut recv, MAX_CONTROL_MSG).await
     {
+        let Some(bytes) = open_frame(seal.as_deref(), lane, bytes) else {
+            break;
+        };
         match scrin_proto::decode_envelope(&bytes) {
             Ok(e) => on_msg(Some(e)),
             // Unknown payloads from newer peers are skipped, not fatal.
@@ -174,14 +205,20 @@ pub(crate) async fn reader_task(
 }
 
 /// Input stream reader on the host: every envelope that is an input event.
+/// `lane` is the stream's inner-channel lane (gateway path only).
 pub(crate) async fn read_input_stream(
     mut recv: RecvStream,
+    seal: Seal,
+    lane: u32,
     mut on_input: impl FnMut(InputEvent) + Send,
 ) {
     while let Ok(Some(bytes)) = read_frame(&mut recv).await {
         if bytes.len() > 64 * 1024 {
             break;
         }
+        let Some(bytes) = open_frame(seal.as_deref(), lane, bytes) else {
+            break;
+        };
         if let Ok(e) = scrin_proto::decode_envelope(&bytes)
             && let Some(p) = e.payload
             && let Some(ev) = input_from_payload(p)

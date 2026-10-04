@@ -78,7 +78,7 @@
       "active": true,
       "dialog": false,
       "endpoints": ["https://github.com/scrin-app/scrin/releases/latest/download/latest.json"],
-      "pubkey": "REPLACE_WITH_MINISIGN_PUBLIC_KEY"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJDNDVBNzg0RjJERkY2OUQKUldTZDl0L3loS2RGdkliQk5memt5VUhUZ0hhM3Y0d2tacEJOaW5jY2pzcWZLUVJxQnFyUUh4d0UK"
     }
   }
 }

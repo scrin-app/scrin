@@ -40,6 +40,7 @@ use tracing::{debug, warn};
 
 use crate::api::VideoFrame;
 use crate::backend::{DecoderConfig, EncoderConfig, MediaBackend};
+use crate::gw::{DATAGRAM_LANE, Seal};
 use crate::wire::{Outgoing, env};
 
 /// How often the controller reports arrivals.
@@ -114,6 +115,8 @@ pub(crate) struct HostStreamConfig {
     pub control: mpsc::UnboundedSender<Outgoing>,
     pub display: u32,
     pub mode: Mode,
+    /// Gateway sessions seal every datagram on [`DATAGRAM_LANE`].
+    pub seal: Seal,
     pub on_error: Box<dyn Fn(String) + Send>,
 }
 
@@ -131,6 +134,7 @@ pub(crate) fn start_host_stream(cfg: HostStreamConfig) -> std::io::Result<HostSt
                 &cfg.control,
                 cfg.display,
                 cfg.mode,
+                cfg.seal.as_deref(),
                 &rx,
                 &flag,
             ) {
@@ -194,12 +198,14 @@ impl Adaptation {
     }
 }
 
+#[expect(clippy::too_many_arguments)] // one call site; a struct would only rename them
 fn host_loop(
     conn: &Connection,
     backend: &dyn MediaBackend,
     control: &mpsc::UnboundedSender<Outgoing>,
     display: u32,
     mode: Mode,
+    seal: Option<&crate::gw::Channel>,
     rx: &std_mpsc::Receiver<MediaCtl>,
     stop: &AtomicBool,
 ) -> Result<(), String> {
@@ -237,7 +243,7 @@ fn host_loop(
     let mut force_key = true;
     let mut last_key = Instant::now();
     let mut next_due = Instant::now();
-    let (mut sent_ok, mut sent_err) = (0u64, 0u64);
+    let mut sent = SendCounters::default();
 
     while !stop.load(Ordering::Acquire) {
         while let Ok(msg) = rx.try_recv() {
@@ -274,22 +280,9 @@ fn host_loop(
             let shards = fec
                 .encode(frame_id, au.keyframe, &au.data)
                 .map_err(|e| e.to_string())?;
-            let mut times = Vec::with_capacity(shards.len());
-            for shard in &shards {
-                let bytes = shard.to_bytes();
-                let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-                times.push((micros_since(started), size));
-                match send_datagram(conn, Bytes::from(bytes)) {
-                    Ok(()) => sent_ok += 1,
-                    Err(scrin_net::NetError::Connection(_)) => return Ok(()),
-                    Err(e) => {
-                        sent_err += 1;
-                        if sent_err.is_power_of_two() {
-                            debug!(error = %e, sent_ok, sent_err, "datagram not sent");
-                        }
-                    }
-                }
-            }
+            let Some(times) = send_shards(conn, seal, &shards, started, &mut sent)? else {
+                return Ok(());
+            };
             log.push(frame_id, times);
             frame_id = frame_id.wrapping_add(1);
         }
@@ -303,6 +296,44 @@ fn host_loop(
         }
     }
     Ok(())
+}
+
+#[derive(Debug, Default)]
+struct SendCounters {
+    ok: u64,
+    err: u64,
+}
+
+/// Sends one frame's shards (sealed on the gateway path). Returns the send
+/// log entries, or `None` once the connection is gone.
+fn send_shards(
+    conn: &Connection,
+    seal: Option<&crate::gw::Channel>,
+    shards: &[scrin_media::fec::Shard],
+    started: Instant,
+    sent: &mut SendCounters,
+) -> Result<Option<Vec<(u64, u32)>>, String> {
+    let mut times = Vec::with_capacity(shards.len());
+    for shard in shards {
+        let bytes = shard.to_bytes();
+        let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+        times.push((micros_since(started), size));
+        let bytes = match seal {
+            None => bytes,
+            Some(c) => c.seal(DATAGRAM_LANE, &bytes).map_err(|e| e.to_string())?,
+        };
+        match send_datagram(conn, Bytes::from(bytes)) {
+            Ok(()) => sent.ok += 1,
+            Err(scrin_net::NetError::Connection(_)) => return Ok(None),
+            Err(e) => {
+                sent.err += 1;
+                if sent.err.is_power_of_two() {
+                    debug!(error = %e, sent_ok = sent.ok, sent_err = sent.err, "datagram not sent");
+                }
+            }
+        }
+    }
+    Ok(Some(times))
 }
 
 /// Counters the actor turns into `Stats` events.

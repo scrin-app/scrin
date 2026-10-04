@@ -9,6 +9,7 @@ datastore = "1.2.1"
 coroutines = "1.11.0"
 serialization = "1.11.0"
 jna = "5.19.1"
+androidxAnnotation = "1.11.0"
 coreKtx = "1.19.1"
 coreSplashscreen = "1.2.0"
 tvMaterial = "1.1.0"
@@ -36,6 +37,7 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+androidx-annotation = { module = "androidx.annotation:annotation", version.ref = "androidxAnnotation" }
 tv-material = { module = "androidx.tv:tv-material", version.ref = "tvMaterial" }
 junit = { module = "junit:junit", version.ref = "junit" }
 

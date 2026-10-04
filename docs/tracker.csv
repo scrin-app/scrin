@@ -73,9 +73,9 @@ U-005,UI system,Responsive 360px -> 32:9 ultrawide; container queries; Playwrigh
 U-006,UI system,a11y WCAG 2.2 AA: keyboard; focus; labels; axe gate,story,P0,todo,
 U-007,UI system,ScrinHost platform interface (WebHost; DesktopHost),story,P0,done,VERIFIED 2026-10-04: packages/ui/src/platform/desktop.ts + desktop.test.ts (vitest 178 passed); desktop exe Home screen shows the engine's ID and code
 WB-001,Web client,SPA shell (TanStack Router) + PWA manifest,story,P0,todo,
-WB-002,Web client,WebTransport client + WASM handshake (scrin-wasm),story,P0,todo,
-WB-003,Web client,WebCodecs VideoDecoder -> WebGPU/WebGL2 canvas; AudioDecoder -> AudioWorklet,story,P0,todo,
-WB-004,Web client,Keyboard/mouse/touch capture; pointer lock; fullscreen; clipboard on focus,story,P0,todo,
+WB-002,Web client,WebTransport client + WASM handshake (scrin-wasm),story,P0,doing,"VERIFIED 2026-10-04: crates/scrin-wasm (wasm 237 KB raw/107 KB gzip) + packages/ui/src/platform/web (WT + WS fallback, Identify/SPAKE2/Attest, inner channel); contract docs/protocol/gateway-session.md; vectors testvectors/gateway-session.json replayed by cargo test -p scrin-wasm --test vectors and vitest (326 passed). EXPECTED: live run vs a real host needs the engine scrin-gw/1 handler green (gw.rs clippy) + browser e2e"
+WB-003,Web client,WebCodecs VideoDecoder -> WebGPU/WebGL2 canvas; AudioDecoder -> AudioWorklet,story,P0,doing,"VERIFIED 2026-10-04 (unit): FEC reassembly in wasm, avc1 codec string from SPS, VideoDecoder pipeline with keyframe requests, WebGL2/2D renderer, BitrateFeedback + Ping + stats; audio not started"
+WB-004,Web client,Keyboard/mouse/touch capture; pointer lock; fullscreen; clipboard on focus,story,P0,doing,"VERIFIED 2026-10-04 (unit): KeyboardEvent.code->HID table, letterbox-aware absolute pointer, pointer-lock relative, wheel 120/notch, special keys; touch + clipboard not started"
 WB-005,Web client,File upload/download through streams,story,P1,todo,
 A-001,Android,Gradle project (AGP 9.4; Kotlin 2.4.20; Compose BOM 2026.09; navigation3; gms/foss flavours),story,P0,done,VERIFIED 2026-10-04: gradle :app gms/foss + :tv + :core-ffi BUILD SUCCESSFUL; lint 0; checkFossNoGms pass
 A-002,Android,core-ffi: cargo-ndk + UniFFI library mode + JNA host tests,story,P0,done,VERIFIED 2026-10-04: scrin-ffi UniFFI 0.32 library mode + cargo-ndk; core-ffi JNA tests 6 pass; android clippy pass

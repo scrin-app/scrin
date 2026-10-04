@@ -9,6 +9,7 @@ useDefault = true
 description = "Known-answer test vectors and fixtures are public by design"
 paths = [
     '''(^|/)tests?/vectors/''',
+    '''^testvectors/''',
     '''(^|/)testdata/''',
     '''(^|/)\.copilot-tmp/''',
     '''(^|/)target/''',

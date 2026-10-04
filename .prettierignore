@@ -6,3 +6,4 @@ pnpm-lock.yaml
 target
 crates
 docs
+packages/protocol/wasm

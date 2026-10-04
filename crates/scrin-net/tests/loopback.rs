@@ -278,7 +278,8 @@ async fn datagram_round_trip_and_size_check() {
 
     let max = max_datagram_size(&c).expect("datagrams supported");
     assert!(max >= 1000, "max datagram {max}");
-    let err = send_datagram(&c, Bytes::from(vec![0u8; max + 1])).unwrap_err();
+    // PMTU discovery may raise the limit between calls, so exceed any UDP payload.
+    let err = send_datagram(&c, Bytes::from(vec![0u8; 65_536])).unwrap_err();
     assert!(matches!(err, NetError::DatagramTooLarge { .. }), "{err:?}");
 
     tokio::time::timeout(T, async {

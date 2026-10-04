@@ -41,9 +41,11 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -100,6 +102,8 @@ private fun MyDeviceCard(hub: SessionHub, code: String?, secondsLeft: Long, prog
         SectionTitle(stringResource(R.string.home_my_device))
         Text(stringResource(R.string.home_your_id), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(hub.fingerprint, style = CodeStyle.copy(fontSize = MaterialTheme.typography.titleLarge.fontSize))
+        val scrinId by hub.scrinId.collectAsState()
+        scrinId?.let { Text(stringResource(R.string.home_scrin_id, it.chunked(3).joinToString(" ")), style = CodeStyle) }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             val ringLabel = stringResource(R.string.home_code_expires_in, Format.countdown(secondsLeft))
             CountdownRing(progress, 88.dp, ringLabel) {
@@ -137,10 +141,10 @@ private fun MyDeviceCard(hub: SessionHub, code: String?, secondsLeft: Long, prog
 @Composable
 private fun ConnectCard(hub: SessionHub, onConnect: () -> Unit) {
     var target by rememberSaveable { mutableStateOf("") }
-    var code by rememberSaveable { mutableStateOf("") }
+    var code by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
     var problem by remember { mutableStateOf<ConnectForm.Problem?>(null) }
     val submit = {
-        problem = hub.connect(target, code)
+        problem = hub.connect(target, code.text)
         if (problem == null) onConnect()
     }
     SectionCard {
@@ -165,7 +169,10 @@ private fun ConnectCard(hub: SessionHub, onConnect: () -> Unit) {
         )
         OutlinedTextField(
             value = code,
-            onValueChange = { code = Format.codeInput(it); problem = null },
+            onValueChange = {
+                code = TextFieldValue(Format.codeInput(it.text), TextRange(Format.codeCaret(it.text, it.selection.end)))
+                problem = null
+            },
             label = { Text(stringResource(R.string.home_code_field)) },
             singleLine = true,
             textStyle = CodeStyle,

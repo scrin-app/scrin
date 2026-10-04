@@ -21,7 +21,7 @@
     <string name="home_connect_title">Controlează alt dispozitiv</string>
     <string name="home_connect_body">Introdu linkul sau ID-ul partenerului și codul de unică folosință afișat pe ecranul lui.</string>
     <string name="home_partner_id">Linkul sau ID-ul partenerului</string>
-    <string name="home_partner_id_hint">Un link scrin sau un ID hex de 64 de caractere</string>
+    <string name="home_partner_id_hint">Un link scrin, un ID scrin din 9 cifre sau un ID hex de 64 de caractere</string>
     <string name="home_code_field">Cod de unică folosință</string>
     <string name="home_e2e_note">Criptat cap la cap. Codul nu părăsește niciunul dintre dispozitive.</string>
     <string name="home_connect_action">Conectează-te</string>
@@ -60,8 +60,27 @@
     <string name="viewer_mode_direct">Atingere</string>
     <string name="viewer_keyboard">Tastatură</string>
     <string name="viewer_disconnect">Deconectează</string>
-    <string name="viewer_rtt">%1$d ms</string>
     <string name="viewer_type_here">Scrie pentru a trimite</string>
+    <string name="settings_server">Server scrin</string>
+    <string name="settings_server_body">Opțional. Cu un server, acest dispozitiv primește un ID scrin din 9 cifre și te poți conecta la alții după ID. Fără server, trimite linkuri.</string>
+    <string name="settings_server_label">URL server</string>
+    <string name="settings_server_invalid">Folosește un URL https:// (http:// doar pentru o adresă din rețeaua privată).</string>
+    <string name="home_scrin_id">ID scrin: %1$s</string>
+    <string name="viewer_stats">%1$s cadre/s · %2$d ms · %3$s Mb/s</string>
+    <string name="viewer_path_direct">direct</string>
+    <string name="viewer_path_relay">prin releu</string>
+    <string name="key_esc">Esc</string>
+    <string name="key_tab">Tab</string>
+    <string name="key_ctrl">Ctrl</string>
+    <string name="key_alt">Alt</string>
+    <string name="key_win">Win</string>
+    <string name="key_left">←</string>
+    <string name="key_up">↑</string>
+    <string name="key_down">↓</string>
+    <string name="key_right">→</string>
+    <string name="key_backspace">⌫</string>
+    <string name="key_enter">Enter</string>
+    <string name="key_ctrl_alt_del">Ctrl+Alt+Del</string>
 
     <string name="host_title">Permite controlul de la distanță</string>
     <string name="host_step_input">1 · Permite controlul prin atingere</string>

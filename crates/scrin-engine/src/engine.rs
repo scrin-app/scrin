@@ -22,11 +22,15 @@ use scrin_net::handshake::{
     ControlStream, HostCode, RejectReason as NetReject, controller_auth_trusted, controller_pair,
     host_auth_trusted, host_pair,
 };
-use scrin_net::{Connection, NetConfig, NetEndpoint, NetError, remote_device_id};
+use scrin_net::reconnect::Backoff;
+use scrin_net::{
+    ALPN, Connection, NetConfig, NetEndpoint, NetError, RelayConfig, remote_device_id,
+};
 use scrin_proto::v1::{self, envelope::Payload};
 use scrin_session::{
-    ControllerAction, ControllerEnd, ControllerEvent, ControllerSession, ControllerStatus,
-    HostAction, HostEvent, HostSession, HostState, PeerId, Permissions, Policy, SessionKind,
+    ControllerAction, ControllerEnd, ControllerEvent, ControllerSession, ControllerState,
+    ControllerStatus, HostAction, HostEvent, HostSession, HostState, PeerId, Permissions, Policy,
+    SessionKind,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -38,10 +42,12 @@ use crate::api::{
     parse_permission, parse_permissions, permission_names,
 };
 use crate::backend::{DecoderConfig, InputEvent, MediaBackend, default_backend};
+use crate::gw::{self, GW_ALPN, GwCode, Seal};
 use crate::media::{
     HostStream, HostStreamConfig, MediaCtl, Receiver, ReceiverConfig, ReceiverStats,
     start_host_stream, start_receiver,
 };
+use crate::rendezvous::{AddrHint, RendezvousClient, ServerError, relay_urls};
 use crate::resolve::{ConnectTarget, Resolver, StaticResolver, encode_ticket, parse_target};
 use crate::secret::{SecretStore, platform_store};
 use crate::wire::{
@@ -53,8 +59,13 @@ use crate::{EngineError, Result};
 
 const SEED_NAME: &str = "identity-seed";
 const TRUST_FILE: &str = "trust.sealed";
+const ID_FILE: &str = "scrin-id.json";
 const TICK: Duration = Duration::from_millis(100);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(20);
+/// Presence heartbeat (halved server TTL, at most this).
+const PRESENCE_INTERVAL: Duration = Duration::from_secs(30);
+/// Re-dial attempts of a dropped trusted session (backoff 0.5 s → 8 s, ~40 s).
+const RECONNECT_ATTEMPTS: u32 = 8;
 /// Failed code guesses within [`FAILURE_WINDOW_MS`] that trigger a lockout.
 const MAX_FAILURES: usize = 5;
 const FAILURE_WINDOW_MS: u64 = 10 * 60 * 1000;
@@ -75,6 +86,17 @@ pub struct EngineConfig {
     /// Shown to the other side in the request interstitial.
     pub device_name: String,
     pub code_ttl: Duration,
+    /// Rendezvous server base URL (`https://…`, or `http://…` on a private
+    /// network). Enables registration (the real 9-digit scrin ID), presence
+    /// every 30 s, signed resolve of scrin IDs (overrides `resolver`),
+    /// failure reports, and the server's relays (when `net.relay` is
+    /// `Default`).
+    pub server: Option<String>,
+    /// Put direct addresses in the presence hint. `false` advertises the
+    /// relay only (every dial goes through the relay first).
+    pub advertise_direct: bool,
+    /// Accept browser sessions bridged by the server's gateway (`scrin-gw/1`).
+    pub accept_gateway: bool,
 }
 
 impl std::fmt::Debug for EngineConfig {
@@ -83,6 +105,7 @@ impl std::fmt::Debug for EngineConfig {
             .field("data_dir", &self.data_dir)
             .field("backend", &self.backend.name())
             .field("device_name", &self.device_name)
+            .field("server", &self.server)
             .finish_non_exhaustive()
     }
 }
@@ -100,6 +123,9 @@ impl EngineConfig {
             policy: Policy::default(),
             device_name: std::env::var("COMPUTERNAME").unwrap_or_else(|_| "scrin".into()),
             code_ttl: DEFAULT_TTL,
+            server: None,
+            advertise_direct: true,
+            accept_gateway: true,
         }
     }
 }
@@ -145,9 +171,35 @@ impl EngineHandle {
 
 /// Starts the engine: loads or creates the identity, binds the endpoint and
 /// spawns the actor. Must be called inside a tokio runtime.
-pub async fn start(cfg: EngineConfig) -> Result<(EngineHandle, mpsc::UnboundedReceiver<Event>)> {
+pub async fn start(
+    mut cfg: EngineConfig,
+) -> Result<(EngineHandle, mpsc::UnboundedReceiver<Event>)> {
     let identity = Arc::new(load_identity(&*cfg.secrets)?);
+    let rendezvous = match cfg.server.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => Some(RendezvousClient::new(s, identity.clone())?),
+        _ => None,
+    };
+    if let Some(rv) = &rendezvous
+        && matches!(cfg.net.relay, RelayConfig::Default)
+    {
+        // The server's own relays; if /v1/info is unreachable now, the server
+        // URL itself (scrin-server serves /relay on its API listener).
+        let info = tokio::time::timeout(Duration::from_secs(3), rv.info())
+            .await
+            .ok()
+            .and_then(std::result::Result::ok);
+        let urls = relay_urls(rv.base(), info.as_ref());
+        if !urls.is_empty() {
+            info!(relays = ?urls, "using the server's relays");
+            cfg.net.relay = RelayConfig::Custom(urls);
+        }
+    }
     let endpoint = NetEndpoint::bind(*identity.seed(), cfg.net.clone()).await?;
+    if cfg.accept_gateway {
+        endpoint
+            .inner()
+            .set_alpns(vec![ALPN.to_vec(), GW_ALPN.to_vec()]);
+    }
     let (events, events_rx) = mpsc::unbounded_channel();
     let (trust, tampered) = load_trust(&cfg.data_dir, &identity);
     if tampered {
@@ -161,16 +213,32 @@ pub async fn start(cfg: EngineConfig) -> Result<(EngineHandle, mpsc::UnboundedRe
     spawn_accept_loop(endpoint.clone(), tx.clone());
     let clock = Clock::new();
     let code = CodeState::new(cfg.code_ttl, &clock)?;
+    let registered_id = rendezvous
+        .as_ref()
+        .and_then(|rv| load_registered(&cfg.data_dir, rv.base(), &identity.device_id()));
+    let presence_task = rendezvous.as_ref().map(|rv| {
+        spawn_presence(
+            rv.clone(),
+            endpoint.clone(),
+            cfg.advertise_direct,
+            tx.clone(),
+        )
+    });
+    let resolver: Arc<dyn Resolver> = match &rendezvous {
+        Some(rv) => Arc::new(rv.clone()),
+        None => cfg.resolver,
+    };
     info!(
         device = %identity.device_id().fingerprint(),
         backend = cfg.backend.name(),
+        server = cfg.server.as_deref().unwrap_or("-"),
         "engine started"
     );
     let actor = Actor {
         identity,
         endpoint,
         backend: cfg.backend,
-        resolver: cfg.resolver,
+        resolver,
         device_name: cfg.device_name,
         code_ttl: cfg.code_ttl,
         data_dir: cfg.data_dir,
@@ -187,9 +255,110 @@ pub async fn start(cfg: EngineConfig) -> Result<(EngineHandle, mpsc::UnboundedRe
         failures: VecDeque::new(),
         lockout_until: None,
         last_second: Instant::now(),
+        accept_gateway: cfg.accept_gateway,
+        server_online: rendezvous.as_ref().map(|_| false),
+        rendezvous,
+        registered_id,
+        presence_task,
     };
     tokio::spawn(actor.run(rx));
     Ok((EngineHandle { tx }, events_rx))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedId {
+    server: String,
+    device: String,
+    id: String,
+}
+
+/// The scrin ID this device got from `server` earlier, if any.
+fn load_registered(dir: &std::path::Path, server: &str, device: &DeviceId) -> Option<String> {
+    let bytes = std::fs::read(dir.join(ID_FILE)).ok()?;
+    let s: SavedId = serde_json::from_slice(&bytes).ok()?;
+    (s.server == server && s.device == device.to_hex() && s.id.len() == 9).then_some(s.id)
+}
+
+fn save_registered(dir: &std::path::Path, server: &str, device: &DeviceId, id: &str) -> Result<()> {
+    let json = serde_json::to_vec(&SavedId {
+        server: server.to_owned(),
+        device: device.to_hex(),
+        id: id.to_owned(),
+    })
+    .map_err(|_| EngineError::Invalid("scrin id"))?;
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(ID_FILE);
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+/// Registers once, then refreshes presence every ~30 s (half the server's
+/// TTL), with exponential backoff (1 s → 60 s) while the server is
+/// unreachable. Reports every outcome to the actor.
+fn spawn_presence(
+    rv: RendezvousClient,
+    ep: NetEndpoint,
+    direct: bool,
+    tx: mpsc::UnboundedSender<ActorMsg>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        // Give the endpoint a moment to find its home relay so the first
+        // hint already carries it.
+        let _ = tokio::time::timeout(Duration::from_secs(5), ep.inner().online()).await;
+        let mut backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60), 0.2);
+        let mut registered = false;
+        let mut interval = PRESENCE_INTERVAL;
+        loop {
+            let hint = AddrHint::from_addr(&dial_addr(&ep), direct);
+            let result = if registered {
+                rv.presence(&hint).await
+            } else {
+                rv.register(&hint).await.map(|r| (r.id, r.presence_ttl))
+            };
+            let delay = match result {
+                Ok((id, ttl)) => {
+                    registered = true;
+                    backoff.reset();
+                    if ttl > 0 {
+                        interval = Duration::from_secs((ttl / 2).clamp(1, 30));
+                    }
+                    let _ = tx.send(ActorMsg::Presence {
+                        id: Some(id),
+                        online: true,
+                    });
+                    interval
+                }
+                Err(e) => {
+                    if e == ServerError::NotRegistered {
+                        registered = false;
+                    }
+                    debug!(error = %e, "presence failed");
+                    let _ = tx.send(ActorMsg::Presence {
+                        id: None,
+                        online: false,
+                    });
+                    backoff.next_delay_random()
+                }
+            };
+            if tx.is_closed() {
+                return;
+            }
+            tokio::time::sleep(delay).await;
+        }
+    })
+}
+
+/// This endpoint's dialable address: iroh's view plus concrete bound sockets.
+fn dial_addr(ep: &NetEndpoint) -> EndpointAddr {
+    let mut addr = ep.addr();
+    for s in ep.bound_sockets() {
+        if !s.ip().is_unspecified() {
+            addr.addrs.insert(TransportAddr::Ip(s));
+        }
+    }
+    addr
 }
 
 fn load_identity(store: &dyn SecretStore) -> Result<Identity> {
@@ -276,6 +445,9 @@ fn unix_s() -> u64 {
 struct CodeState {
     code: Option<OneTimeCode>,
     slot: Arc<HostCode>,
+    /// The same code for the gateway path. Handshakes never overlap and any
+    /// consumption rotates both, so the code still allows one guess.
+    gw: Arc<GwCode>,
     issued_at: u64,
     expires_at: u64,
 }
@@ -286,6 +458,7 @@ impl CodeState {
         let now = clock.now_ms();
         Ok(Self {
             slot: Arc::new(HostCode::new(code.clone())),
+            gw: Arc::new(GwCode::new(Some(code.clone()))),
             expires_at: now.saturating_add(u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX)),
             issued_at: now,
             code: Some(code),
@@ -297,10 +470,15 @@ impl CodeState {
         let dead = OneTimeCode::generate_with_ttl(Duration::ZERO)?;
         Ok(Self {
             slot: Arc::new(HostCode::new(dead)),
+            gw: Arc::new(GwCode::new(None)),
             code: None,
             issued_at: clock.now_ms(),
             expires_at: until,
         })
+    }
+
+    fn is_consumed(&self) -> bool {
+        self.slot.is_consumed() || self.gw.is_consumed()
     }
 }
 
@@ -329,12 +507,20 @@ enum ActorMsg {
         session: SessionId,
         message: String,
     },
+    /// Outcome of a register/presence call.
+    Presence {
+        id: Option<String>,
+        online: bool,
+    },
 }
 
 struct HostPaired {
     control: ControlStream,
     kind: SessionKind,
     sas: Option<Sas>,
+    /// Gateway path: the inner channel, and the controller key from `Hello`.
+    seal: Seal,
+    claimed_peer: Option<DeviceId>,
 }
 
 struct CtlPaired {
@@ -363,12 +549,18 @@ struct HostSlot {
     kind: SessionKind,
     trust_label: Option<String>,
     mode: Mode,
+    seal: Seal,
     tasks: Vec<JoinHandle<()>>,
 }
 
 struct CtlSlot {
     machine: ControllerSession,
     code: Zeroizing<String>,
+    /// What the user dialled, for re-dialling a trusted session.
+    target: ConnectTarget,
+    requested: Permissions,
+    /// A trusted session is being re-established after a drop.
+    reconnecting: bool,
     handshake: Option<JoinHandle<()>>,
     conn: Option<Connection>,
     out: Option<mpsc::UnboundedSender<Outgoing>>,
@@ -417,6 +609,12 @@ struct Actor {
     failures: VecDeque<u64>,
     lockout_until: Option<u64>,
     last_second: Instant,
+    accept_gateway: bool,
+    /// `None` without a server; else whether the last presence call worked.
+    server_online: Option<bool>,
+    rendezvous: Option<RendezvousClient>,
+    registered_id: Option<String>,
+    presence_task: Option<JoinHandle<()>>,
 }
 
 impl Actor {
@@ -482,29 +680,44 @@ impl Actor {
             ActorMsg::MediaError { session, message } => {
                 self.error(Some(&session), "media", message);
             }
+            ActorMsg::Presence { id, online } => self.on_presence(id, online),
         }
     }
 
     // ---- status, code, trust ------------------------------------------------
 
-    fn dial_addr(&self) -> EndpointAddr {
-        let mut addr = self.endpoint.addr();
-        for s in self.endpoint.bound_sockets() {
-            if !s.ip().is_unspecified() {
-                addr.addrs.insert(TransportAddr::Ip(s));
+    fn on_presence(&mut self, id: Option<String>, online: bool) {
+        let mut changed = self.server_online != Some(online);
+        self.server_online = Some(online);
+        if let Some(id) = id
+            && self.registered_id.as_deref() != Some(id.as_str())
+        {
+            if let Some(rv) = &self.rendezvous
+                && let Err(e) =
+                    save_registered(&self.data_dir, rv.base(), &self.identity.device_id(), &id)
+            {
+                warn!(error = %e, "could not persist the scrin id");
             }
+            info!(scrin_id = %id, "registered with the server");
+            self.registered_id = Some(id);
+            changed = true;
         }
-        addr
+        if changed {
+            self.emit(Event::Status(self.status()));
+        }
     }
 
     fn status(&self) -> Status {
         let id = self.identity.device_id();
-        let addr = self.dial_addr();
+        let addr = dial_addr(&self.endpoint);
         Status {
             device_id: id.to_hex(),
             fingerprint: id.fingerprint(),
-            scrin_id: provisional_scrin_id(&id),
-            online: !addr.addrs.is_empty(),
+            scrin_id: self
+                .registered_id
+                .clone()
+                .unwrap_or_else(|| provisional_scrin_id(&id)),
+            online: self.server_online.unwrap_or(!addr.addrs.is_empty()),
             ticket: encode_ticket(&addr),
             code: self
                 .code
@@ -752,18 +965,65 @@ impl Actor {
     }
 
     fn on_incoming(&mut self, conn: Connection) {
+        let gateway = conn.alpn() == GW_ALPN;
+        if gateway && !self.accept_gateway {
+            conn.close(0u32.into(), b"gateway sessions disabled");
+            return;
+        }
         let peer = remote_device_id(&conn);
+        // A trusted controller re-dialling after a network drop replaces its
+        // own session (the old connection may not have timed out yet).
+        if !gateway
+            && self.host_handshakes == 0
+            && self.trust.lookup(&peer, unix_s()).is_some()
+            && let Some(old) = self
+                .host_slot
+                .as_ref()
+                .filter(|h| h.peer == peer && h.seal.is_none())
+                .map(|h| h.id.clone())
+        {
+            info!(session = %old, "trusted controller reconnected; replacing its session");
+            self.host_event(HostEvent::PeerDisconnected);
+            self.close_host(&old, "reconnected");
+        }
         if self.host_busy() {
             debug!(peer = ?peer, "busy; refusing connection");
-            conn.close(BUSY_CODE.into(), b"busy");
+            let code = if gateway { gw::close::BUSY } else { BUSY_CODE };
+            conn.close(code.into(), b"busy");
             return;
         }
         self.host_handshakes += 1;
-        let trusted = self.trust.lookup(&peer, unix_s()).is_some();
         let me = self.endpoint.device_id();
+        let tx = self.self_tx.clone();
+        if gateway {
+            // The iroh peer is the gateway; never look it up in the trust store.
+            let code = self.code.gw.clone();
+            let identity = self.identity.clone();
+            tokio::spawn(async move {
+                let (peer, result) = match gw::host_pair(&conn, &identity, &code).await {
+                    Ok(o) => (
+                        o.peer,
+                        Ok(HostPaired {
+                            control: ControlStream {
+                                send: o.send,
+                                recv: o.recv,
+                                version: 1,
+                            },
+                            kind: SessionKind::Anonymous,
+                            sas: Some(o.sas),
+                            seal: Some(o.channel),
+                            claimed_peer: Some(o.peer),
+                        }),
+                    ),
+                    Err((claimed, e)) => (claimed.unwrap_or(peer), Err(e)),
+                };
+                let _ = tx.send(ActorMsg::HostHandshake { conn, peer, result });
+            });
+            return;
+        }
+        let trusted = self.trust.lookup(&peer, unix_s()).is_some();
         let slot = self.code.slot.clone();
         let trust = self.trust.clone();
-        let tx = self.self_tx.clone();
         tokio::spawn(async move {
             let result = if trusted {
                 host_auth_trusted(&conn, me, &trust, unix_s())
@@ -772,12 +1032,16 @@ impl Actor {
                         control: o.control,
                         kind: SessionKind::Trusted,
                         sas: None,
+                        seal: None,
+                        claimed_peer: None,
                     })
             } else {
                 host_pair(&conn, me, &slot).await.map(|o| HostPaired {
                     control: o.control,
                     kind: SessionKind::Anonymous,
                     sas: Some(o.sas),
+                    seal: None,
+                    claimed_peer: None,
                 })
             };
             let _ = tx.send(ActorMsg::HostHandshake { conn, peer, result });
@@ -791,7 +1055,7 @@ impl Actor {
         result: std::result::Result<HostPaired, NetError>,
     ) {
         self.host_handshakes = self.host_handshakes.saturating_sub(1);
-        if self.code.slot.is_consumed()
+        if self.code.is_consumed()
             && let Err(e) = self.rotate_code()
         {
             warn!(error = %e, "could not rotate the one-time code");
@@ -799,35 +1063,58 @@ impl Actor {
         let paired = match result {
             Ok(p) => p,
             Err(e) => {
-                if matches!(e, NetError::PairingFailed) {
+                if matches!(e, NetError::PairingFailed | NetError::BadSignature) {
                     self.record_failure();
                     if self.lockout_until.is_some() {
                         let _ = self.rotate_code();
                     }
+                    self.report_failure(peer);
                 }
-                info!(peer = ?peer, error = %e, "incoming handshake failed");
-                conn.close(0u32.into(), b"handshake failed");
+                info!(peer = %peer.fingerprint(), error = %e, "incoming handshake failed");
+                let close = if conn.alpn() == GW_ALPN {
+                    gw::close_code(&e)
+                } else {
+                    0
+                };
+                conn.close(close.into(), b"handshake failed");
                 return;
             }
         };
+        let peer = paired.claimed_peer.unwrap_or(peer);
         let id = self.next_session('h');
         let (out, out_rx) = mpsc::unbounded_channel();
         let ControlStream { send, recv, .. } = paired.control;
-        let mut tasks = vec![tokio::spawn(writer_task(conn.clone(), send, out_rx))];
+        let mut tasks = vec![tokio::spawn(writer_task(
+            conn.clone(),
+            send,
+            out_rx,
+            paired.seal.clone(),
+        ))];
         let tx = self.self_tx.clone();
         let sid = id.clone();
-        tasks.push(tokio::spawn(reader_task(recv, move |env| {
-            let _ = tx.send(ActorMsg::Control {
-                session: sid.clone(),
-                env,
-            });
-        })));
+        tasks.push(tokio::spawn(reader_task(
+            recv,
+            paired.seal.clone(),
+            move |env| {
+                let _ = tx.send(ActorMsg::Control {
+                    session: sid.clone(),
+                    env,
+                });
+            },
+        )));
         tasks.push(tokio::spawn(accept_input_streams(
             conn.clone(),
             id.clone(),
+            paired.seal.clone(),
             self.self_tx.clone(),
         )));
-        info!(session = %id, peer = ?peer, trusted = paired.kind == SessionKind::Trusted, "controller paired");
+        info!(
+            session = %id,
+            peer = %peer.fingerprint(),
+            trusted = paired.kind == SessionKind::Trusted,
+            gateway = paired.seal.is_some(),
+            "controller paired"
+        );
         self.host_slot = Some(HostSlot {
             id,
             conn,
@@ -838,7 +1125,23 @@ impl Actor {
             kind: paired.kind,
             trust_label: None,
             mode: Mode::Quality,
+            seal: paired.seal,
             tasks,
+        });
+    }
+
+    /// Tells the server a pairing failed here, so it can lock the ID out
+    /// across hosts and controllers (best effort, off the actor).
+    fn report_failure(&self, controller: DeviceId) {
+        let Some(rv) = self.rendezvous.clone() else {
+            return;
+        };
+        tokio::spawn(async move {
+            match rv.report_failure(Some(controller)).await {
+                Ok(a) if a.locked => warn!("server locked this scrin ID after failed pairings"),
+                Ok(_) => {}
+                Err(e) => debug!(error = %e, "could not report the failed pairing"),
+            }
         });
     }
 
@@ -1000,6 +1303,7 @@ impl Actor {
                 control: h.out.clone(),
                 display,
                 mode: h.mode,
+                seal: h.seal.clone(),
                 on_error: Box::new(move |message| {
                     let _ = tx.send(ActorMsg::MediaError {
                         session: sid.clone(),
@@ -1129,6 +1433,9 @@ impl Actor {
         let mut slot = CtlSlot {
             machine: ControllerSession::default(),
             code: Zeroizing::new(code),
+            target: parsed.clone(),
+            requested,
+            reconnecting: false,
             handshake: None,
             conn: None,
             out: None,
@@ -1181,26 +1488,16 @@ impl Actor {
             return;
         };
         slot.handshake = None;
+        if slot.reconnecting {
+            self.on_reconnected(id, result);
+            return;
+        }
         match result {
             Ok(p) => {
-                let (out, out_rx) = mpsc::unbounded_channel();
-                let ControlStream { send, recv, .. } = p.control;
-                slot.tasks
-                    .push(tokio::spawn(writer_task(p.conn.clone(), send, out_rx)));
-                let tx = self.self_tx.clone();
-                let sid = id.to_owned();
-                slot.tasks.push(tokio::spawn(reader_task(recv, move |env| {
-                    let _ = tx.send(ActorMsg::Control {
-                        session: sid.clone(),
-                        env,
-                    });
-                })));
-                slot.out = Some(out);
-                slot.conn = Some(p.conn);
                 slot.sas = p.sas.map(|s| s.0);
-                slot.peer = Some(p.peer);
                 slot.trusted = p.trusted;
                 let sas_text = p.sas.map(|s| s.emoji()).unwrap_or_default();
+                self.attach_ctl_conn(id, p.conn, p.control, p.peer);
                 self.ctl_event(id, ControllerEvent::Connected);
                 self.ctl_event(id, ControllerEvent::Paired { sas: sas_text });
             }
@@ -1214,6 +1511,166 @@ impl Actor {
                 }
             }
         }
+    }
+
+    /// Starts the control reader/writer of a (re)established connection.
+    fn attach_ctl_conn(
+        &mut self,
+        id: &str,
+        conn: Connection,
+        control: ControlStream,
+        peer: DeviceId,
+    ) {
+        let tx = self.self_tx.clone();
+        let Some(slot) = self.controllers.get_mut(id) else {
+            conn.close(0u32.into(), b"gone");
+            return;
+        };
+        let (out, out_rx) = mpsc::unbounded_channel();
+        let ControlStream { send, recv, .. } = control;
+        slot.tasks
+            .push(tokio::spawn(writer_task(conn.clone(), send, out_rx, None)));
+        let sid = id.to_owned();
+        slot.tasks
+            .push(tokio::spawn(reader_task(recv, None, move |env| {
+                let _ = tx.send(ActorMsg::Control {
+                    session: sid.clone(),
+                    env,
+                });
+            })));
+        slot.out = Some(out);
+        slot.conn = Some(conn);
+        slot.peer = Some(peer);
+    }
+
+    /// A trusted, active session lost its connection: drop the dead pieces
+    /// and re-dial with backoff, re-authenticating by signature (no code).
+    fn start_reconnect(&mut self, id: &str) {
+        let endpoint = self.endpoint.clone();
+        let identity = self.identity.clone();
+        let resolver = self.resolver.clone();
+        let tx = self.self_tx.clone();
+        let Some(slot) = self.controllers.get_mut(id) else {
+            return;
+        };
+        for t in slot.tasks.drain(..) {
+            t.abort();
+        }
+        slot.receiver = None;
+        slot.input = None;
+        slot.out = None;
+        if let Some(c) = slot.conn.take() {
+            c.close(0u32.into(), b"reconnecting");
+        }
+        slot.reconnecting = true;
+        let target = slot.target.clone();
+        let sid = id.to_owned();
+        slot.handshake = Some(tokio::spawn(async move {
+            let mut backoff = Backoff::new(Duration::from_millis(500), Duration::from_secs(8), 0.2);
+            let mut last = fail(
+                "connection-lost",
+                "the connection to the host was lost",
+                false,
+            );
+            for attempt in 1..=RECONNECT_ATTEMPTS {
+                tokio::time::sleep(backoff.next_delay_random()).await;
+                match controller_connect(&endpoint, &identity, &*resolver, target.clone(), "").await
+                {
+                    Ok(p) => {
+                        let _ = tx.send(ActorMsg::CtlHandshake {
+                            session: sid,
+                            result: Ok(p),
+                        });
+                        return;
+                    }
+                    Err(f) => {
+                        debug!(attempt, code = f.code, "reconnect attempt failed");
+                        let final_answer = f.code == "untrusted";
+                        last = f;
+                        if final_answer {
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = tx.send(ActorMsg::CtlHandshake {
+                session: sid,
+                result: Err(last),
+            });
+        }));
+        let peer = slot.peer.map(|p| p.to_hex());
+        info!(session = %id, "connection lost; reconnecting");
+        self.emit(Event::StateChanged {
+            session: id.to_owned(),
+            role: Role::Controller,
+            state: SessionState::Connecting,
+            peer,
+            reason: Some("reconnecting".into()),
+        });
+    }
+
+    fn on_reconnected(&mut self, id: &str, result: std::result::Result<CtlPaired, CtlFailure>) {
+        let expected = self.controllers.get(id).and_then(|s| s.peer);
+        match result {
+            Ok(p) if Some(p.peer) == expected && p.trusted => {
+                self.attach_ctl_conn(id, p.conn, p.control, p.peer);
+                let requested = self
+                    .controllers
+                    .get(id)
+                    .map_or(Permissions::empty(), |s| match s.machine.granted() {
+                        g if g == Permissions::empty() => s.requested,
+                        g => g,
+                    });
+                // Stay `reconnecting` until the host answers.
+                self.ctl_send(
+                    id,
+                    Payload::SessionRequest(v1::SessionRequest {
+                        requested: perms_to_wire(requested),
+                        controller_name: self.device_name.clone(),
+                        unattended: true,
+                    }),
+                );
+            }
+            Ok(p) => {
+                p.conn.close(0u32.into(), b"wrong host");
+                self.reconnect_failed(id, "reconnected to a different device");
+            }
+            Err(f) => self.reconnect_failed(id, &f.message),
+        }
+    }
+
+    fn reconnect_failed(&mut self, id: &str, why: &str) {
+        if let Some(slot) = self.controllers.get_mut(id) {
+            slot.reconnecting = false;
+        }
+        self.error(
+            Some(id),
+            "connection-lost",
+            format!("the connection to the host was lost ({why})"),
+        );
+        self.ctl_event(id, ControllerEvent::Disconnected);
+    }
+
+    /// The host re-accepted a reconnected trusted session.
+    fn on_reaccepted(&mut self, id: &str, granted: Permissions) {
+        if let Some(slot) = self.controllers.get_mut(id) {
+            slot.reconnecting = false;
+        }
+        self.start_controller_media(id);
+        let peer = self
+            .controllers
+            .get(id)
+            .and_then(|s| s.peer)
+            .map(|p| p.to_hex());
+        self.emit(Event::StateChanged {
+            session: id.to_owned(),
+            role: Role::Controller,
+            state: SessionState::Active,
+            peer,
+            reason: Some("reconnected".into()),
+        });
+        self.ctl_event(id, ControllerEvent::PermissionsChanged(granted));
+        info!(session = %id, "reconnected");
     }
 
     fn ctl_send(&self, id: &str, p: Payload) {
@@ -1403,11 +1860,41 @@ impl Actor {
     }
 
     fn on_ctl_control(&mut self, id: &str, env: Option<v1::Envelope>) {
+        let (active, trusted, reconnecting) =
+            self.controllers.get(id).map_or((false, false, false), |s| {
+                (
+                    matches!(s.machine.state(), ControllerState::Active { .. }),
+                    s.trusted,
+                    s.reconnecting,
+                )
+            });
         let Some(payload) = env.and_then(|e| e.payload) else {
+            if reconnecting {
+                return;
+            }
+            if active && trusted {
+                self.start_reconnect(id);
+                return;
+            }
+            if active {
+                // A code session cannot resume without a new code (the old
+                // one is spent); the UI offers to reconnect.
+                self.error(
+                    Some(id),
+                    "connection-lost",
+                    "the connection to the host was lost; ask for a new code to reconnect",
+                );
+            }
             self.ctl_event(id, ControllerEvent::Disconnected);
             return;
         };
         match payload {
+            Payload::SessionAccept(a) if reconnecting => {
+                self.on_reaccepted(id, perms_from_wire(&a.granted));
+            }
+            Payload::SessionReject(_) if reconnecting => {
+                self.reconnect_failed(id, "the host declined");
+            }
             Payload::SessionAccept(a) => {
                 self.ctl_event(id, ControllerEvent::Accepted(perms_from_wire(&a.granted)));
             }
@@ -1556,6 +2043,9 @@ impl Actor {
         }
         // Give writers a moment to flush SessionEnd before the endpoint goes.
         tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Some(t) = self.presence_task.take() {
+            t.abort();
+        }
         self.endpoint.close().await;
         info!("engine stopped");
     }
@@ -1588,15 +2078,27 @@ pub fn provisional_scrin_id(id: &DeviceId) -> String {
 async fn accept_input_streams(
     conn: Connection,
     session: SessionId,
+    seal: Seal,
     tx: mpsc::UnboundedSender<ActorMsg>,
 ) {
-    while let Ok((kind, _send, recv)) = accept_stream(&conn).await {
+    // Gateway path: 3-byte stream headers and per-stream lanes; the Control
+    // lane is taken by the handshake stream.
+    let mut used = std::collections::HashSet::from([gw::CONTROL_LANE]);
+    loop {
+        let next = if seal.is_some() {
+            gw::accept_stream(&conn, &mut used)
+                .await
+                .map(|(k, lane, _s, r)| (k, lane, r))
+        } else {
+            accept_stream(&conn).await.map(|(k, _s, r)| (k, 0, r))
+        };
+        let Ok((kind, lane, recv)) = next else { break };
         if kind != StreamKind::Input {
             continue;
         }
         let tx = tx.clone();
         let sid = session.clone();
-        tokio::spawn(read_input_stream(recv, move |event| {
+        tokio::spawn(read_input_stream(recv, seal.clone(), lane, move |event| {
             let _ = tx.send(ActorMsg::Input {
                 session: sid.clone(),
                 event,

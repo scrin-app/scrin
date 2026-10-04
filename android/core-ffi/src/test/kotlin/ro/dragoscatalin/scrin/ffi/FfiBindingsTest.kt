@@ -15,7 +15,7 @@ class FfiBindingsTest {
     private fun core(seed: Byte, name: String = "jvm"): ScrinCore {
         val dir = Files.createTempDirectory("scrin-ffi").toFile()
         dir.deleteOnExit()
-        return ScrinCore(dir.absolutePath, ByteArray(32) { seed }, CoreConfig(name, emptyList(), true))
+        return ScrinCore(dir.absolutePath, ByteArray(32) { seed }, CoreConfig(name, emptyList(), true, null))
     }
 
     @Test
@@ -48,7 +48,8 @@ class FfiBindingsTest {
         assertTrue(code.expiresInS in 590u..600u)
         assertTrue(c.codeValid())
         val info = c.hostInfo()
-        assertTrue(info.ticket.startsWith("scrin1"))
+        assertTrue(info.ticket.startsWith("scrin:" + c.deviceId()))
+        assertEquals(null, info.scrinId)
         val parsed = parseTicket(info.ticket)
         assertEquals(c.deviceId(), parsed.deviceId)
         assertTrue(parsed.directAddresses >= 1u)
@@ -129,8 +130,9 @@ class FfiBindingsTest {
         override fun onPermissionAsked(permission: SessionPermission) { q += "asked:$permission" }
         override fun onNotice(notice: Notice) { q += "notice:$notice" }
         override fun onStats(stats: SessionStats) = Unit
+        override fun onRegistered(scrinId: String) { q += "registered:$scrinId" }
         override fun onVideoConfig(config: VideoConfigInfo) { q += "video:${config.width}x${config.height}" }
-        override fun onVideoFrame(data: ByteArray, keyframe: Boolean) { q += "frame:${data.size}" }
+        override fun onVideoFrame(data: ByteArray, keyframe: Boolean, frameId: UInt, ptsUs: ULong) { q += "frame:${data.size}" }
         override fun onKeyframeRequest() { q += "kf" }
         override fun onInput(event: RemoteInput) { q += "input:$event" }
         override fun onEnded(end: EndInfo) { q += "ended:${end.kind}" }

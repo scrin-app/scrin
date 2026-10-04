@@ -101,7 +101,7 @@ export function SessionPage({ id, sessionId }: { id: string; sessionId: string |
     <div ref={rootRef} className="relative h-dvh w-full overflow-hidden bg-black text-fg">
       <h1 className="sr-only">{t('session.title', { id: formatScrinId(id) })}</h1>
       <main id="main" className="absolute inset-0 grid place-items-center">
-        <RemoteCanvas id={id} hasVideo={session.stats !== null} />
+        <RemoteCanvas id={id} sessionId={sessionId} hasStats={session.stats !== null} />
       </main>
 
       {showStats && session.stats ? <StatsOverlay stats={session.stats} /> : null}
@@ -300,8 +300,50 @@ function ToolButton({
   );
 }
 
-function RemoteCanvas({ id, hasVideo }: { id: string; hasVideo: boolean }) {
+/**
+ * The remote screen. With a real browser session (WebHost + server) the
+ * stream is decoded and drawn into the canvas; the session client is loaded
+ * lazily so neither it nor the wasm module is in the initial bundle. In demo
+ * mode (mock engine) and on desktop (native surface on top) the canvas stays
+ * unbound and the placeholder shows.
+ */
+function RemoteCanvas({
+  id,
+  sessionId,
+  hasStats,
+}: {
+  id: string;
+  sessionId: string | undefined;
+  hasStats: boolean;
+}) {
   const { t } = useTranslation();
+  const host = useHost();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [live, setLive] = useState(false);
+  const [firstFrame, setFirstFrame] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (host.platform.kind !== 'web' || !sessionId || !canvas) return undefined;
+    let detach: (() => void) | null = null;
+    let cancelled = false;
+    void import('@scrin/ui/web-client').then(({ attachCanvas }) => {
+      if (cancelled) return;
+      const attached = attachCanvas(sessionId, canvas, {
+        onLive: () => setLive(true),
+        onFirstFrame: () => setFirstFrame(true),
+      });
+      detach = () => {
+        attached.detach();
+      };
+    });
+    return () => {
+      cancelled = true;
+      detach?.();
+    };
+  }, [host.platform.kind, sessionId]);
+
+  const hasVideo = live ? firstFrame : hasStats;
   return (
     <figure
       data-scrin-video=""
@@ -310,19 +352,33 @@ function RemoteCanvas({ id, hasVideo }: { id: string; hasVideo: boolean }) {
       <figcaption className="sr-only">
         {t('session.canvasLabel', { id: formatScrinId(id) })}
       </figcaption>
-      {/* Placeholder "desktop" until WebCodecs frames are wired in. */}
-      <div className="absolute inset-0 bg-[radial-gradient(120%_120%_at_20%_10%,oklch(0.45_0.16_264),oklch(0.2_0.08_280)_55%,oklch(0.12_0.03_260))]" />
-      <div className="absolute inset-x-[6%] top-[10%] bottom-[16%] grid grid-cols-3 gap-[2%] opacity-90">
-        <div className="rounded-lg bg-white/10 backdrop-blur" />
-        <div className="col-span-2 rounded-lg bg-white/15 backdrop-blur" />
-      </div>
-      <div className="absolute inset-x-0 bottom-0 flex h-[7%] items-center justify-center gap-[1%] bg-black/40">
-        {Array.from({ length: 7 }, (_, i) => (
-          <span key={i} className="aspect-square h-[60%] rounded bg-white/25" />
-        ))}
-      </div>
+      {live ? null : (
+        <>
+          {/* Demo-mode placeholder "desktop" (mock engine, no stream). */}
+          <div className="absolute inset-0 bg-[radial-gradient(120%_120%_at_20%_10%,oklch(0.45_0.16_264),oklch(0.2_0.08_280)_55%,oklch(0.12_0.03_260))]" />
+          <div className="absolute inset-x-[6%] top-[10%] bottom-[16%] grid grid-cols-3 gap-[2%] opacity-90">
+            <div className="rounded-lg bg-white/10 backdrop-blur" />
+            <div className="col-span-2 rounded-lg bg-white/15 backdrop-blur" />
+          </div>
+          <div className="absolute inset-x-0 bottom-0 flex h-[7%] items-center justify-center gap-[1%] bg-black/40">
+            {Array.from({ length: 7 }, (_, i) => (
+              <span key={i} className="aspect-square h-[60%] rounded bg-white/25" />
+            ))}
+          </div>
+        </>
+      )}
+      {/* Focusable so keyboard input reaches the remote; input is captured by the session client. */}
+      <canvas
+        ref={canvasRef}
+        tabIndex={live ? 0 : -1}
+        aria-label={t('session.canvasLabel', { id: formatScrinId(id) })}
+        className={cn(
+          'absolute inset-0 h-full w-full touch-none object-contain outline-none focus-visible:ring-2 focus-visible:ring-accent',
+          !live && 'pointer-events-none',
+        )}
+      />
       {hasVideo ? null : (
-        <div className="absolute inset-0 grid place-items-center bg-black/55 text-white">
+        <div className="pointer-events-none absolute inset-0 grid place-items-center bg-black/55 text-white">
           <span className="flex items-center gap-3 text-sm">
             <Spinner label={false} /> {t('session.waitingVideo')}
           </span>
