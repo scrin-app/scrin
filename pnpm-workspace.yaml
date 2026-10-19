@@ -6,8 +6,8 @@ packages:
 # package.json in the repo references these with `catalog:`.
 catalog:
   # React
-  react: 19.3.0
-  react-dom: 19.3.0
+  react: 19.3.1
+  react-dom: 19.3.1
   '@types/react': 19.3.0
   '@types/react-dom': 19.3.0
 
@@ -19,88 +19,88 @@ catalog:
   '@types/node': 24.13.4
 
   # Build
-  vite: 8.3.2
-  '@vitejs/plugin-react': 6.1.1
-  '@tanstack/router-plugin': 1.168.42
-  turbo: 2.11.7
+  vite: 8.3.4
+  '@vitejs/plugin-react': 6.1.2
+  '@tanstack/router-plugin': 1.168.47
+  turbo: 2.11.9
 
   # Styling / UI
   tailwindcss: 4.3.3
   '@tailwindcss/vite': 4.3.3
-  '@base-ui/react': 1.8.0
+  '@base-ui/react': 1.9.0
   clsx: 2.1.1
   tailwind-merge: 3.7.0
   class-variance-authority: 0.7.1
-  lucide-react: 1.51.0
-  motion: 14.0.0
+  lucide-react: 1.59.0
+  motion: 14.3.0
   sonner: 2.0.8
 
   # State / data / routing
   zustand: 5.0.15
-  zod: 4.6.5
-  '@tanstack/react-query': 5.104.1
-  '@tanstack/react-router': 1.170.41
-  '@tanstack/react-virtual': 3.14.13
+  zod: 4.6.7
+  '@tanstack/react-query': 5.104.4
+  '@tanstack/react-router': 1.170.45
+  '@tanstack/react-virtual': 3.14.21
   # Reserved for packages/protocol (protobuf-es over proto/scrin/v1).
   '@bufbuild/protobuf': 2.16.0
 
   # i18n
-  i18next: 26.4.2
-  react-i18next: 17.0.15
+  i18next: 26.5.2
+  react-i18next: 17.1.0
 
   # Testing
-  vitest: 5.0.3
+  vitest: 5.0.5
   # Reserved for Vitest Browser Mode once WebCodecs paths need a real browser.
-  '@vitest/browser-playwright': 5.0.3
+  '@vitest/browser-playwright': 5.0.5
   happy-dom: 20.14.5
   '@testing-library/react': 16.3.3
   '@testing-library/dom': 10.4.2
-  '@testing-library/user-event': 14.6.7
-  axe-core: 4.13.0
-  '@playwright/test': 1.63.0
-  '@axe-core/playwright': 4.13.0
+  '@testing-library/user-event': 14.6.8
+  axe-core: 4.14.0
+  '@playwright/test': 1.64.1
+  '@axe-core/playwright': 4.14.0
 
   # Lint / format / hygiene
-  eslint: 10.12.0
+  eslint: 10.13.0
   '@eslint/js': 10.0.1
-  typescript-eslint: 8.71.0
+  typescript-eslint: 8.71.2
   eslint-plugin-react-hooks: 7.1.1
   eslint-config-prettier: 10.1.8
   globals: 17.13.0
-  oxlint: 1.86.0
-  oxlint-tsgolint: 7.0.2003
-  prettier: 3.9.9
+  oxlint: 1.88.0
+  oxlint-tsgolint: 7.0.2004
+  prettier: 3.9.10
   prettier-plugin-tailwindcss: 0.8.1
-  knip: 6.39.0
+  knip: 6.41.0
 
   # Desktop (Tauri 2). Only packages/ui's DesktopHost and apps/desktop use these.
-  '@tauri-apps/api': 2.12.1
-  '@tauri-apps/cli': 2.12.1
-  '@tauri-apps/plugin-clipboard-manager': 2.4.1
-  '@tauri-apps/plugin-deep-link': 2.6.1
-  '@tauri-apps/plugin-notification': 2.5.1
-  '@tauri-apps/plugin-opener': 2.7.0
+  '@tauri-apps/api': 2.12.4
+  '@tauri-apps/cli': 2.12.3
+  '@tauri-apps/plugin-clipboard-manager': 2.5.0
+  '@tauri-apps/plugin-deep-link': 2.6.2
+  '@tauri-apps/plugin-notification': 2.7.0
+  '@tauri-apps/plugin-opener': 2.7.2
   '@tauri-apps/plugin-os': 2.4.0
-  '@tauri-apps/plugin-updater': 2.13.1
+  '@tauri-apps/plugin-updater': 2.14.0
   '@tauri-apps/plugin-process': 2.4.0
 
   # Accounts API (apps/api) + sdk/cli/mcp — verified on npm 2026-10-04.
-  hono: 4.13.12
-  '@hono/node-server': 2.1.3
+  hono: 4.13.13
+  '@hono/node-server': 2.1.5
   '@hono/zod-openapi': 1.6.3
-  '@scalar/hono-api-reference': 0.12.9
-  drizzle-orm: 0.45.3
+  '@scalar/hono-api-reference': 0.12.13
+  drizzle-orm: 0.45.4
   drizzle-kit: 0.31.11
   postgres: 3.4.9
-  better-auth: 1.7.7
-  '@better-auth/passkey': 1.7.7
+  better-auth: 1.7.10
+  '@better-auth/passkey': 1.7.10
   pino: 10.4.0
   '@t3-oss/env-core': 0.13.11
-  '@modelcontextprotocol/sdk': 1.32.0
-  tsdown: 0.23.0
+  '@modelcontextprotocol/sdk': 1.32.1
+  tsdown: 0.23.1
   openapi-typescript: 7.13.0
   openapi-fetch: 0.17.0
-  '@electric-sql/pglite': 0.5.8
+  '@electric-sql/pglite': 0.5.10
 
 minimumReleaseAge: 1440
 # Only versions that pnpm reported as younger than 24 h on 2026-10-04.
