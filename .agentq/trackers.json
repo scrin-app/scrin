@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "repo": "scrin",
+  "trackers": [
+    {
+      "id": "backlog",
+      "file": "docs/tracker.csv",
+      "format": "csv",
+      "columns": {
+        "id": "id",
+        "title": "title",
+        "status": "status",
+        "group": "epic",
+        "evidence": "evidence"
+      },
+      "status": {
+        "map": {
+          "todo": "todo",
+          "doing": "in-progress",
+          "done": "done"
+        }
+      },
+      "idPattern": "^[A-Z]{1,4}-\\d{1,4}$",
+      "index": {
+        "kind": "plan",
+        "order": 0
+      }
+    }
+  ]
+}
